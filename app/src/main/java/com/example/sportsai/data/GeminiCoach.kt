@@ -1,0 +1,188 @@
+package com.example.sportsai.data
+
+import android.graphics.Bitmap
+import android.util.Base64
+import com.example.sportsai.BuildConfig
+import com.example.sportsai.model.AnalysisResult
+import com.example.sportsai.model.AnimationFrame
+import com.example.sportsai.model.Finding
+import com.example.sportsai.model.FindingType
+import com.example.sportsai.model.Sport
+import com.example.sportsai.model.TechniqueReport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+
+/**
+ * Sends key frames from the clip to Google Gemini (a real multimodal AI model)
+ * and asks it to coach the athlete's technique. Gemini looks at the actual images,
+ * so the analysis and feedback are AI-generated, not just rule-based.
+ */
+class GeminiCoach {
+
+    private val model = "gemini-2.5-flash"
+    private val endpoint =
+        "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+
+    val isConfigured: Boolean get() = BuildConfig.GEMINI_API_KEY.isNotBlank()
+
+    /**
+     * @param frames the analyzed frames (bitmap + pose); a spread is sent to Gemini.
+     * @param result raw pipeline result (used for detection rate + fallback).
+     * @param sport which sport to coach.
+     */
+    suspend fun coach(
+        frames: List<AnimationFrame>,
+        result: AnalysisResult,
+        sport: Sport
+    ): TechniqueReport = withContext(Dispatchers.IO) {
+        require(isConfigured) { "Gemini API key not configured" }
+
+        val selected = pickFrames(frames, max = 6)
+        val body = buildRequest(selected, sport)
+
+        val conn = (URL("$endpoint?key=${BuildConfig.GEMINI_API_KEY}").openConnection()
+                as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 30_000
+            readTimeout = 60_000
+            setRequestProperty("Content-Type", "application/json")
+        }
+
+        conn.outputStream.use { it.write(body.toString().toByteArray()) }
+
+        val code = conn.responseCode
+        val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+            ?.bufferedReader()?.use { it.readText() } ?: ""
+        conn.disconnect()
+
+        if (code !in 200..299) {
+            throw RuntimeException("Gemini error $code: ${text.take(300)}")
+        }
+
+        parseReport(text, sport, result.detectionRate)
+    }
+
+    // --- Request building -------------------------------------------------
+
+    private fun pickFrames(frames: List<AnimationFrame>, max: Int): List<AnimationFrame> {
+        if (frames.size <= max) return frames
+        val step = frames.size.toFloat() / max
+        return (0 until max).map { frames[(it * step).toInt().coerceIn(0, frames.size - 1)] }
+    }
+
+    private fun buildRequest(frames: List<AnimationFrame>, sport: Sport): JSONObject {
+        val parts = JSONArray()
+
+        parts.put(JSONObject().put("text", promptFor(sport)))
+
+        frames.forEach { f ->
+            parts.put(
+                JSONObject().put(
+                    "inline_data",
+                    JSONObject()
+                        .put("mime_type", "image/jpeg")
+                        .put("data", encodeJpeg(f.bitmap))
+                )
+            )
+        }
+
+        val contents = JSONArray().put(
+            JSONObject().put("role", "user").put("parts", parts)
+        )
+
+        // Ask Gemini to return strict JSON matching our report schema.
+        val schema = JSONObject()
+            .put("type", "OBJECT")
+            .put(
+                "properties", JSONObject()
+                    .put("score", JSONObject().put("type", "INTEGER"))
+                    .put("summary", JSONObject().put("type", "STRING"))
+                    .put("strengths", stringArraySchema())
+                    .put("issues", stringArraySchema())
+                    .put("tips", stringArraySchema())
+            )
+            .put("required", JSONArray().put("score").put("summary")
+                .put("strengths").put("issues").put("tips"))
+
+        val genConfig = JSONObject()
+            .put("responseMimeType", "application/json")
+            .put("responseSchema", schema)
+
+        return JSONObject()
+            .put("contents", contents)
+            .put("generationConfig", genConfig)
+    }
+
+    private fun stringArraySchema() = JSONObject()
+        .put("type", "ARRAY")
+        .put("items", JSONObject().put("type", "STRING"))
+
+    private fun promptFor(sport: Sport): String = """
+        You are an expert ${sport.displayName} coach analyzing a player from these sequential
+        frames of their motion (in order). Assess their technique from what you can see.
+
+        Give:
+        - score: an integer 0-100 overall technique rating.
+        - summary: one short encouraging sentence.
+        - strengths: 1-3 short bullet points on what they do well.
+        - issues: 1-3 short bullet points on the biggest problems.
+        - tips: 1-3 short, specific drills or cues to improve.
+
+        Be specific to ${sport.displayName} mechanics and keep every point concise and friendly.
+
+        IMPORTANT: Always give a best-effort rating and full feedback. Even if the video is
+        blurry, partially cropped, or the angle is not ideal, still infer as much as you can and
+        provide a score plus strengths, issues, and tips. Never refuse or say you cannot see
+        enough — just work with whatever is visible.
+    """.trimIndent()
+
+    private fun encodeJpeg(bitmap: Bitmap): String {
+        val out = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
+    // --- Response parsing -------------------------------------------------
+
+    private fun parseReport(response: String, sport: Sport, detectionRate: Float): TechniqueReport {
+        val root = JSONObject(response)
+        val textPart = root
+            .getJSONArray("candidates")
+            .getJSONObject(0)
+            .getJSONObject("content")
+            .getJSONArray("parts")
+            .getJSONObject(0)
+            .getString("text")
+
+        val json = JSONObject(textPart)
+        val score = json.optInt("score", 0).coerceIn(0, 100)
+        val summary = json.optString("summary", "Analysis complete.")
+
+        val findings = mutableListOf<Finding>()
+        addFindings(findings, json.optJSONArray("strengths"), FindingType.GOOD, "Strength")
+        addFindings(findings, json.optJSONArray("issues"), FindingType.ISSUE, "To fix")
+        addFindings(findings, json.optJSONArray("tips"), FindingType.TIP, "Drill")
+
+        return TechniqueReport(sport.displayName, score, summary, findings, detectionRate)
+    }
+
+    private fun addFindings(
+        target: MutableList<Finding>,
+        array: JSONArray?,
+        type: FindingType,
+        area: String
+    ) {
+        if (array == null) return
+        for (i in 0 until array.length()) {
+            val msg = array.optString(i).trim()
+            if (msg.isNotEmpty()) target.add(Finding(type, area, msg))
+        }
+    }
+}
+

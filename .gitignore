@@ -1,0 +1,34 @@
+# Local Android/Gradle state
+.gradle/
+.kotlin/
+local.properties
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE-local state
+.idea/
+*.iml
+
+# Build and signing artifacts
+*.apk
+*.aab
+*.apks
+*.jks
+*.keystore
+*.p12
+*.pem
+*.der
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+secrets.properties
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
