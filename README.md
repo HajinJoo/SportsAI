@@ -66,7 +66,7 @@ More detail is available in [Architecture](docs/ARCHITECTURE.md).
 1. Clone the repository:
 
    ```powershell
-   git clone https://github.com/YOUR_USERNAME/SportsAI.git
+   git clone https://github.com/HajinJoo/SportsAI.git
    Set-Location SportsAI
    ```
 
