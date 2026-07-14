@@ -47,9 +47,10 @@ class PoseAnalyzer(private val context: Context) {
         var keyFrame: Bitmap? = null
         var keyFramePose: FramePose? = null
         var bestLandmarkCount = 0
+        var durationMs = 0L
         try {
             retriever.setDataSource(context, videoUri)
-            val durationMs = retriever.extractMetadata(
+            durationMs = retriever.extractMetadata(
                 MediaMetadataRetriever.METADATA_KEY_DURATION
             )?.toLongOrNull() ?: 0L
 
@@ -93,7 +94,13 @@ class PoseAnalyzer(private val context: Context) {
             retriever.release()
         }
         AnalysisResult(
-            framesSampled, framesWithPose, timeline, keyFrame, keyFramePose, animationFrames
+            framesSampled = framesSampled,
+            framesWithPose = framesWithPose,
+            timeline = timeline,
+            keyFrame = keyFrame,
+            keyFramePose = keyFramePose,
+            animationFrames = animationFrames,
+            durationMs = durationMs
         )
     }
 

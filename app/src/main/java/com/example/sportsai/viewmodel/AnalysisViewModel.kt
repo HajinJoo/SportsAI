@@ -1,15 +1,19 @@
 package com.example.sportsai.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sportsai.data.GeminiCoach
+import com.example.sportsai.data.HighlightExtractor
 import com.example.sportsai.data.HistoryRepository
 import com.example.sportsai.data.PoseAnalyzer
 import com.example.sportsai.data.TechniqueAnalyzer
+import com.example.sportsai.data.VideoClipExporter
 import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.FramePose
+import com.example.sportsai.model.HighlightClip
 import com.example.sportsai.model.SessionEntry
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
@@ -34,12 +38,27 @@ sealed interface AnalysisUiState {
         val keyFrame: Bitmap? = null,
         val keyFramePose: FramePose? = null,
         val animationFrames: List<AnimationFrame> = emptyList(),
+        val analysisId: Long,
+        val sourceVideoUri: String,
+        val videoDurationMs: Long,
         /** Filming date chosen by the user; null until they set it. */
         val filmedAtMillis: Long? = null,
         /** True once this session has been added to the progress timeline. */
-        val savedToTimeline: Boolean = false
+        val savedToTimeline: Boolean = false,
+        val sessionId: Long? = null
+    ) : AnalysisUiState
+    /** Viewing a past session from the timeline — similar to Done but read-only. */
+    data class ViewingPastSession(
+        val entry: SessionEntry,
+        val sport: Sport
     ) : AnalysisUiState
     data class Error(val message: String) : AnalysisUiState
+}
+
+sealed interface HighlightEditUiState {
+    data object Idle : HighlightEditUiState
+    data class Saving(val clipId: Long) : HighlightEditUiState
+    data class Error(val message: String) : HighlightEditUiState
 }
 
 class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
@@ -47,6 +66,8 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
     private val analyzer = PoseAnalyzer(app.applicationContext)
     private val techniqueAnalyzer = TechniqueAnalyzer()
     private val geminiCoach = GeminiCoach()
+    private val highlightExtractor = HighlightExtractor()
+    private val videoClipExporter = VideoClipExporter(app.applicationContext)
     private val history = HistoryRepository(app.applicationContext)
 
     private val _uiState = MutableStateFlow<AnalysisUiState>(AnalysisUiState.Idle)
@@ -55,6 +76,13 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
     private val _timeline = MutableStateFlow<List<SessionEntry>>(emptyList())
     val timeline: StateFlow<List<SessionEntry>> = _timeline.asStateFlow()
 
+    /** Currently selected metric filter (null = show all). */
+    private val _selectedMetric = MutableStateFlow<String?>(null)
+    val selectedMetric: StateFlow<String?> = _selectedMetric.asStateFlow()
+
+    private val _highlightEditState = MutableStateFlow<HighlightEditUiState>(HighlightEditUiState.Idle)
+    val highlightEditState: StateFlow<HighlightEditUiState> = _highlightEditState.asStateFlow()
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             _timeline.value = history.load()
@@ -62,7 +90,16 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun analyze(videoUri: Uri, sport: Sport) {
+        cleanupUnsavedDraft()
+        val analysisId = System.currentTimeMillis()
+        runCatching {
+            getApplication<Application>().contentResolver.takePersistableUriPermission(
+                videoUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
         _uiState.value = AnalysisUiState.Analyzing(0f)
+        _highlightEditState.value = HighlightEditUiState.Idle
         viewModelScope.launch {
             try {
                 val result = analyzer.analyze(videoUri) { progress ->
@@ -85,12 +122,23 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                     techniqueAnalyzer.analyze(result, sport)
                 }
 
+                // Extract highlight clips from the pose timeline.
+                val highlights = highlightExtractor.extract(result, sport).map { clip ->
+                    runCatching {
+                        videoClipExporter.export(videoUri, clip, analysisId)
+                    }.getOrDefault(clip)
+                }
+                val reportWithHighlights = report.copy(highlights = highlights)
+
                 _uiState.value = AnalysisUiState.Done(
-                    report = report,
+                    report = reportWithHighlights,
                     sport = sport,
                     keyFrame = result.keyFrame,
                     keyFramePose = result.keyFramePose,
-                    animationFrames = result.animationFrames
+                    animationFrames = result.animationFrames,
+                    analysisId = analysisId,
+                    sourceVideoUri = videoUri.toString(),
+                    videoDurationMs = result.durationMs
                 )
             } catch (e: Exception) {
                 _uiState.value = AnalysisUiState.Error(e.message ?: "Analysis failed")
@@ -100,40 +148,166 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Called when the user picks the filming date manually (video had no date metadata). */
     fun saveSessionWithDate(filmedAtMillis: Long) {
-        val s = _uiState.value as? AnalysisUiState.Done ?: return
-        if (s.savedToTimeline) return
+        val initial = _uiState.value as? AnalysisUiState.Done ?: return
+        if (initial.savedToTimeline) return
         viewModelScope.launch(Dispatchers.IO) {
-            persist(s.sport, filmedAtMillis, s.report)
-            _uiState.value = s.copy(filmedAtMillis = filmedAtMillis, savedToTimeline = true)
+            val latest = _uiState.value as? AnalysisUiState.Done ?: return@launch
+            if (latest.analysisId != initial.analysisId || latest.savedToTimeline) return@launch
+            val entry = persist(latest, filmedAtMillis)
+            _uiState.value = latest.copy(
+                filmedAtMillis = filmedAtMillis,
+                savedToTimeline = true,
+                sessionId = entry.id
+            )
+        }
+    }
+
+    /** Loads a past session and displays it as a ViewingPastSession state. */
+    fun loadSession(sessionId: Long) {
+        val cached = _timeline.value.firstOrNull { it.id == sessionId }
+        if (cached != null) {
+            val sport = runCatching { Sport.valueOf(cached.sportName) }.getOrNull() ?: return
+            _highlightEditState.value = HighlightEditUiState.Idle
+            _uiState.value = AnalysisUiState.ViewingPastSession(entry = cached, sport = sport)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val entry = history.findById(sessionId) ?: return@launch
+            val sport = try { Sport.valueOf(entry.sportName) } catch (_: Exception) { return@launch }
+            _highlightEditState.value = HighlightEditUiState.Idle
+            _uiState.value = AnalysisUiState.ViewingPastSession(entry = entry, sport = sport)
         }
     }
 
     fun deleteSession(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             _timeline.value = history.delete(id)
+            val current = _uiState.value
+            if (current is AnalysisUiState.ViewingPastSession && current.entry.id == id) {
+                _uiState.value = AnalysisUiState.Idle
+            }
         }
     }
 
-    private fun persist(sport: Sport, filmedAtMillis: Long, report: TechniqueReport) {
+    fun setMetricFilter(metric: String?) {
+        _selectedMetric.value = metric
+    }
+
+    fun updateHighlight(updated: HighlightClip) {
+        if (_highlightEditState.value is HighlightEditUiState.Saving) return
+        val state = _uiState.value
+        val sourceUri = when (state) {
+            is AnalysisUiState.Done -> state.sourceVideoUri
+            is AnalysisUiState.ViewingPastSession -> state.entry.sourceVideoUri
+            else -> ""
+        }
+        val sessionId = when (state) {
+            is AnalysisUiState.Done -> state.analysisId
+            is AnalysisUiState.ViewingPastSession -> state.entry.id
+            else -> 0L
+        }
+        if (sourceUri.isBlank() || sessionId == 0L) {
+            _highlightEditState.value = HighlightEditUiState.Error(
+                "The original video is no longer available. You can still watch the saved highlight."
+            )
+            return
+        }
+
+        _highlightEditState.value = HighlightEditUiState.Saving(updated.id)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val exported = videoClipExporter.export(
+                    Uri.parse(sourceUri),
+                    updated.copy(editedByUser = true),
+                    sessionId
+                )
+                applyHighlightUpdate(exported)
+                _highlightEditState.value = HighlightEditUiState.Idle
+            } catch (error: Exception) {
+                _highlightEditState.value = HighlightEditUiState.Error(
+                    error.message ?: "The highlight could not be updated"
+                )
+            }
+        }
+    }
+
+    fun clearHighlightEditError() {
+        if (_highlightEditState.value is HighlightEditUiState.Error) {
+            _highlightEditState.value = HighlightEditUiState.Idle
+        }
+    }
+
+    private fun applyHighlightUpdate(updated: HighlightClip) {
+        when (val current = _uiState.value) {
+            is AnalysisUiState.Done -> {
+                val updatedReport = current.report.copy(
+                    highlights = current.report.highlights.map {
+                        if (it.id == updated.id) updated else it
+                    }
+                )
+                val updatedState = current.copy(report = updatedReport)
+                _uiState.value = updatedState
+                current.sessionId?.let { savedId ->
+                    val saved = _timeline.value.firstOrNull { it.id == savedId } ?: return@let
+                    val updatedEntry = saved.copy(highlights = updatedReport.highlights)
+                    _timeline.value = history.update(updatedEntry)
+                }
+            }
+
+            is AnalysisUiState.ViewingPastSession -> {
+                val updatedEntry = current.entry.copy(
+                    highlights = current.entry.highlights.map {
+                        if (it.id == updated.id) updated else it
+                    }
+                )
+                _timeline.value = history.update(updatedEntry)
+                _uiState.value = current.copy(entry = updatedEntry)
+            }
+
+            else -> Unit
+        }
+    }
+
+    private fun persist(state: AnalysisUiState.Done, filmedAtMillis: Long): SessionEntry {
         val entry = SessionEntry(
-            id = System.currentTimeMillis(),
-            sportName = sport.name,
+            id = state.analysisId,
+            sportName = state.sport.name,
             filmedAtMillis = filmedAtMillis,
-            score = report.overallScore,
-            summary = report.summary
+            score = state.report.overallScore,
+            summary = state.report.summary,
+            metrics = state.report.metricScores,
+            aiOverview = state.report.aiOverview,
+            highlights = state.report.highlights,
+            findings = state.report.findings,
+            detectionRate = state.report.detectionRate,
+            sourceVideoUri = state.sourceVideoUri,
+            videoDurationMs = state.videoDurationMs
         )
         _timeline.value = history.add(entry)
+        return entry
     }
 
     fun reset() {
+        cleanupUnsavedDraft()
+        _highlightEditState.value = HighlightEditUiState.Idle
         _uiState.value = AnalysisUiState.Idle
     }
 
+    private fun cleanupUnsavedDraft() {
+        val current = _uiState.value as? AnalysisUiState.Done ?: return
+        if (!current.savedToTimeline) {
+            viewModelScope.launch(Dispatchers.IO) {
+                videoClipExporter.deleteSession(current.analysisId)
+            }
+        }
+    }
+
     override fun onCleared() {
+        val current = _uiState.value as? AnalysisUiState.Done
+        if (current != null && !current.savedToTimeline) {
+            videoClipExporter.deleteSession(current.analysisId)
+        }
         super.onCleared()
         analyzer.close()
     }
 }
-
-
-

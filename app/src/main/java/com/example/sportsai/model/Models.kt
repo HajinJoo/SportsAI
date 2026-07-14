@@ -31,7 +31,9 @@ data class AnalysisResult(
     val keyFrame: Bitmap? = null,
     val keyFramePose: FramePose? = null,
     /** Downscaled frames with poses for animated playback. */
-    val animationFrames: List<AnimationFrame> = emptyList()
+    val animationFrames: List<AnimationFrame> = emptyList(),
+    /** Duration reported by the source video container. */
+    val durationMs: Long = 0L
 ) {
     val detectionRate: Float
         get() = if (framesSampled == 0) 0f else framesWithPose.toFloat() / framesSampled

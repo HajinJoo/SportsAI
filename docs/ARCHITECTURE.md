@@ -17,6 +17,7 @@ SportsAI is a single-module Android application built with Kotlin and Jetpack Co
 ```text
 Idle -> Analyzing(scanning) -> Analyzing(coaching) -> Done
                                                     -> Error
+Timeline date -> ViewingPastSession -> Timeline
 ```
 
 The ViewModel is scoped above bottom navigation, so changing tabs does not cancel analysis.
@@ -26,6 +27,8 @@ The ViewModel is scoped above bottom navigation, so changing tabs does not cance
 - `PoseAnalyzer`: frame extraction and ML Kit pose detection
 - `TechniqueAnalyzer`: explainable sport-specific biomechanics rules
 - `GeminiCoach`: optional Gemini multimodal analysis
+- `HighlightExtractor`: pose-timeline ranking for release, contact, form, and peak-action moments
+- `VideoClipExporter`: local `MediaExtractor`/`MediaMuxer` MP4 cutting and re-cutting
 - `HistoryRepository`: app-private JSON timeline persistence
 
 ### Models
@@ -40,8 +43,11 @@ Models represent landmarks, frame poses, animation frames, sports, findings, rep
 4. The analyzer stores a timeline, best key frame, and downscaled replay frames.
 5. If a Gemini key and pose frames are available, `GeminiCoach` requests structured coaching.
 6. If that request cannot run, `TechniqueAnalyzer` generates a local report.
-7. `AnalysisViewModel` exposes the report and replay to Compose.
-8. After the user chooses a filming date, a compact timeline entry is stored locally.
+7. `HighlightExtractor` selects the most useful movement moments.
+8. `VideoClipExporter` cuts those ranges into separate app-private MP4 files.
+9. `AnalysisViewModel` exposes the report, replay, metric filters, and highlights to Compose.
+10. After the user chooses a filming date, the full report and highlight references are stored locally.
+11. Tapping a timeline date reconstructs the historical report. Editing a highlight re-cuts the original picker URI when that persisted permission is still available.
 
 ## Network boundary
 
@@ -61,5 +67,5 @@ The app does not upload the original video. When Gemini is configured, up to six
 
 ## Storage
 
-`HistoryRepository` writes `session_history.json` in `Context.filesDir`. Entries contain only the selected sport, filming date, score, and summary. Video files and pose bitmaps are not persisted by the repository.
+`HistoryRepository` writes `session_history.json` in `Context.filesDir`. Entries contain the selected sport, filming date, overall score, summary, findings, metric scores, AI overview, detection rate, source picker URI, video duration, and highlight metadata. Generated MP4 highlights live under `Context.filesDir/highlights`; deleting a session deletes its private highlight files. Pose bitmaps and animation frames remain memory-only, and the original source video is not copied into app storage.
 

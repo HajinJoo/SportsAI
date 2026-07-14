@@ -91,6 +91,7 @@ import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.FramePose
+import com.example.sportsai.model.HighlightClip
 import com.example.sportsai.model.SessionEntry
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
@@ -104,6 +105,7 @@ import com.example.sportsai.ui.theme.TipBlue
 import com.example.sportsai.ui.theme.WarnAmber
 import com.example.sportsai.viewmodel.AnalysisUiState
 import com.example.sportsai.viewmodel.AnalysisViewModel
+import com.example.sportsai.viewmodel.HighlightEditUiState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -126,6 +128,8 @@ fun PremiumSportsDashboard(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val timeline by viewModel.timeline.collectAsStateWithLifecycle()
+    val selectedMetric by viewModel.selectedMetric.collectAsStateWithLifecycle()
+    val highlightEditState by viewModel.highlightEditState.collectAsStateWithLifecycle()
     var selectedSport by rememberSaveable { mutableStateOf(Sport.BASEBALL_PITCH) }
     var selectedTab by rememberSaveable { mutableStateOf(DashboardTab.HOME) }
 
@@ -189,8 +193,15 @@ fun PremiumSportsDashboard(
 
                                 DashboardTab.UPLOAD -> UploadDestination(
                                     state = state,
+                                    timeline = timeline,
                                     sport = selectedSport,
-                                    onSportChange = { selectedSport = it },
+                                    selectedMetric = selectedMetric,
+                                    highlightEditState = highlightEditState,
+                                    onSportChange = {
+                                        selectedSport = it
+                                        viewModel.setMetricFilter(null)
+                                    },
+                                    onMetricSelected = viewModel::setMetricFilter,
                                     onPickVideo = {
                                         picker.launch(
                                             PickVisualMediaRequest(
@@ -199,15 +210,30 @@ fun PremiumSportsDashboard(
                                         )
                                     },
                                     onSaveDate = viewModel::saveSessionWithDate,
-                                    onReset = viewModel::reset
+                                    onReset = viewModel::reset,
+                                    onBackToTimeline = {
+                                        viewModel.reset()
+                                        selectedTab = DashboardTab.TIMELINE
+                                    },
+                                    onUpdateHighlight = viewModel::updateHighlight,
+                                    onClearHighlightError = viewModel::clearHighlightEditError
                                 )
 
                                 DashboardTab.TIMELINE -> TimelineDestination(
                                     entries = timeline,
                                     sport = selectedSport,
-                                    onSportChange = { selectedSport = it },
+                                    selectedMetric = selectedMetric,
+                                    onSportChange = {
+                                        selectedSport = it
+                                        viewModel.setMetricFilter(null)
+                                    },
+                                    onMetricSelected = viewModel::setMetricFilter,
                                     onDelete = viewModel::deleteSession,
-                                    onStartAnalysis = { selectedTab = DashboardTab.UPLOAD }
+                                    onStartAnalysis = { selectedTab = DashboardTab.UPLOAD },
+                                    onOpenSession = { id ->
+                                        viewModel.loadSession(id)
+                                        selectedTab = DashboardTab.UPLOAD
+                                    }
                                 )
                             }
                         }
@@ -361,12 +387,14 @@ private fun DashboardBottomBar(
                     val statusColor = when (analysisState) {
                         is AnalysisUiState.Analyzing -> SkyCyan
                         is AnalysisUiState.Done -> ScoreHigh
+                        is AnalysisUiState.ViewingPastSession -> ScoreHigh
                         is AnalysisUiState.Error -> ScoreLow
                         AnalysisUiState.Idle -> Color.Transparent
                     }
                     val statusText = when (analysisState) {
                         is AnalysisUiState.Analyzing -> "Analysis in progress"
                         is AnalysisUiState.Done -> "Analysis ready"
+                        is AnalysisUiState.ViewingPastSession -> "Historical analysis open"
                         is AnalysisUiState.Error -> "Analysis error"
                         AnalysisUiState.Idle -> "Ready to upload"
                     }
@@ -488,11 +516,18 @@ private fun HomeDashboard(
 @Composable
 private fun UploadDestination(
     state: AnalysisUiState,
+    timeline: List<SessionEntry>,
     sport: Sport,
+    selectedMetric: String?,
+    highlightEditState: HighlightEditUiState,
     onSportChange: (Sport) -> Unit,
+    onMetricSelected: (String?) -> Unit,
     onPickVideo: () -> Unit,
     onSaveDate: (Long) -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
+    onBackToTimeline: () -> Unit,
+    onUpdateHighlight: (HighlightClip) -> Unit,
+    onClearHighlightError: () -> Unit
 ) {
     AnimatedContent(
         targetState = state,
@@ -515,7 +550,38 @@ private fun UploadDestination(
             }
 
             is AnalysisUiState.Analyzing -> AnalysisExperience(current)
-            is AnalysisUiState.Done -> ResultsDashboard(current, onSaveDate, onReset)
+            is AnalysisUiState.Done -> {
+                val previous = timeline
+                    .filter { it.sportName == current.sport.name && it.id != current.sessionId }
+                    .maxByOrNull { it.filmedAtMillis }
+                ResultsDashboard(
+                    state = current,
+                    previousSession = previous,
+                    selectedMetric = selectedMetric,
+                    highlightEditState = highlightEditState,
+                    onMetricSelected = onMetricSelected,
+                    onSaveDate = onSaveDate,
+                    onAnalyzeAnother = onReset,
+                    onUpdateHighlight = onUpdateHighlight,
+                    onClearHighlightError = onClearHighlightError
+                )
+            }
+            is AnalysisUiState.ViewingPastSession -> {
+                val sorted = timeline
+                    .filter { it.sportName == current.sport.name }
+                    .sortedBy { it.filmedAtMillis }
+                val index = sorted.indexOfFirst { it.id == current.entry.id }
+                PastSessionDashboard(
+                    state = current,
+                    previousSession = sorted.getOrNull(index - 1),
+                    selectedMetric = selectedMetric,
+                    highlightEditState = highlightEditState,
+                    onMetricSelected = onMetricSelected,
+                    onBackToTimeline = onBackToTimeline,
+                    onUpdateHighlight = onUpdateHighlight,
+                    onClearHighlightError = onClearHighlightError
+                )
+            }
             is AnalysisUiState.Error -> ErrorExperience(current.message, onReset)
         }
     }
@@ -525,9 +591,12 @@ private fun UploadDestination(
 private fun TimelineDestination(
     entries: List<SessionEntry>,
     sport: Sport,
+    selectedMetric: String?,
     onSportChange: (Sport) -> Unit,
+    onMetricSelected: (String?) -> Unit,
     onDelete: (Long) -> Unit,
-    onStartAnalysis: () -> Unit
+    onStartAnalysis: () -> Unit,
+    onOpenSession: (Long) -> Unit
 ) {
     val sportEntries = entries.filter { it.sportName == sport.name }
     Column {
@@ -539,7 +608,14 @@ private fun TimelineDestination(
         Spacer(Modifier.height(12.dp))
         SportSelector(sport, onSportChange)
         Spacer(Modifier.height(28.dp))
-        TimelinePanel(entries, sport, onDelete)
+        TimelinePanel(
+            entries = entries,
+            sport = sport,
+            selectedMetric = selectedMetric,
+            onMetricSelected = onMetricSelected,
+            onDelete = onDelete,
+            onOpenSession = onOpenSession
+        )
         if (sportEntries.isEmpty()) {
             Spacer(Modifier.height(14.dp))
             Button(
@@ -1042,8 +1118,14 @@ private fun StepPill(number: String, label: String, active: Boolean, complete: B
 @Composable
 private fun ResultsDashboard(
     state: AnalysisUiState.Done,
+    previousSession: SessionEntry?,
+    selectedMetric: String?,
+    highlightEditState: HighlightEditUiState,
+    onMetricSelected: (String?) -> Unit,
     onSaveDate: (Long) -> Unit,
-    onAnalyzeAnother: () -> Unit
+    onAnalyzeAnother: () -> Unit,
+    onUpdateHighlight: (HighlightClip) -> Unit,
+    onClearHighlightError: () -> Unit
 ) {
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1069,8 +1151,29 @@ private fun ResultsDashboard(
             DatePrompt(onSaveDate)
         }
         Spacer(Modifier.height(20.dp))
+        AiSkillOverviewCard(state.report.aiOverview)
+        Spacer(Modifier.height(20.dp))
+        PerformanceMetricsSection(
+            sport = state.sport,
+            current = state.report.metricScores,
+            previous = previousSession?.metrics.orEmpty(),
+            selectedMetric = selectedMetric,
+            onMetricSelected = onMetricSelected
+        )
+        Spacer(Modifier.height(24.dp))
         MotionPanel(state.animationFrames, state.keyFrame, state.keyFramePose)
         Spacer(Modifier.height(24.dp))
+        HighlightsSection(
+            highlights = state.report.highlights,
+            animationFrames = state.animationFrames,
+            sourceVideoUri = state.sourceVideoUri,
+            videoDurationMs = state.videoDurationMs,
+            savingClipId = (highlightEditState as? HighlightEditUiState.Saving)?.clipId,
+            editError = (highlightEditState as? HighlightEditUiState.Error)?.message,
+            onSave = onUpdateHighlight,
+            onClearError = onClearHighlightError
+        )
+        if (state.report.highlights.isNotEmpty()) Spacer(Modifier.height(24.dp))
         CoachingReport(state.report)
         Spacer(Modifier.height(26.dp))
         Button(
@@ -1081,6 +1184,62 @@ private fun ResultsDashboard(
             Text("Analyze another clip", fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(8.dp))
             Text("→", style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+
+@Composable
+private fun PastSessionDashboard(
+    state: AnalysisUiState.ViewingPastSession,
+    previousSession: SessionEntry?,
+    selectedMetric: String?,
+    highlightEditState: HighlightEditUiState,
+    onMetricSelected: (String?) -> Unit,
+    onBackToTimeline: () -> Unit,
+    onUpdateHighlight: (HighlightClip) -> Unit,
+    onClearHighlightError: () -> Unit
+) {
+    val report = state.entry.toTechniqueReport(state.sport)
+    Column {
+        Text("PAST ANALYSIS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(5.dp))
+        Text(formatSessionDate(state.entry.filmedAtMillis), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(5.dp))
+        Text("Saved ${state.sport.displayName.lowercase()} result", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(18.dp))
+        PremiumScoreCard(report)
+        Spacer(Modifier.height(18.dp))
+        AiSkillOverviewCard(report.aiOverview)
+        Spacer(Modifier.height(20.dp))
+        PerformanceMetricsSection(
+            sport = state.sport,
+            current = state.entry.metrics,
+            previous = previousSession?.metrics.orEmpty(),
+            selectedMetric = selectedMetric,
+            onMetricSelected = onMetricSelected
+        )
+        Spacer(Modifier.height(24.dp))
+        HighlightsSection(
+            highlights = state.entry.highlights,
+            animationFrames = emptyList(),
+            sourceVideoUri = state.entry.sourceVideoUri,
+            videoDurationMs = state.entry.videoDurationMs,
+            savingClipId = (highlightEditState as? HighlightEditUiState.Saving)?.clipId,
+            editError = (highlightEditState as? HighlightEditUiState.Error)?.message,
+            onSave = onUpdateHighlight,
+            onClearError = onClearHighlightError
+        )
+        if (state.entry.highlights.isNotEmpty()) Spacer(Modifier.height(24.dp))
+        if (report.findings.isNotEmpty()) {
+            CoachingReport(report)
+            Spacer(Modifier.height(24.dp))
+        }
+        OutlinedButton(
+            onClick = onBackToTimeline,
+            modifier = Modifier.fillMaxWidth().height(54.dp),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Text("← Back to timeline", fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -1339,7 +1498,14 @@ private fun SavedDateBar(date: Long) {
 }
 
 @Composable
-private fun TimelinePanel(entries: List<SessionEntry>, sport: Sport, onDelete: (Long) -> Unit) {
+private fun TimelinePanel(
+    entries: List<SessionEntry>,
+    sport: Sport,
+    selectedMetric: String?,
+    onMetricSelected: (String?) -> Unit,
+    onDelete: (Long) -> Unit,
+    onOpenSession: (Long) -> Unit
+) {
     val sorted = entries.filter { it.sportName == sport.name }.sortedBy { it.filmedAtMillis }
     var deleteTarget by remember { mutableStateOf<SessionEntry?>(null) }
     Column {
@@ -1348,14 +1514,31 @@ private fun TimelinePanel(entries: List<SessionEntry>, sport: Sport, onDelete: (
         if (sorted.isEmpty()) {
             EmptyTimeline(sport)
         } else {
-            TimelineSummary(sorted)
+            val latest = sorted.last()
+            val previous = sorted.getOrNull(sorted.lastIndex - 1)
+            PerformanceMetricsSection(
+                sport = sport,
+                current = latest.metrics,
+                previous = previous?.metrics.orEmpty(),
+                selectedMetric = selectedMetric,
+                onMetricSelected = onMetricSelected
+            )
+            Spacer(Modifier.height(16.dp))
+            TimelineSummary(sorted, selectedMetric)
             Spacer(Modifier.height(12.dp))
-            ProgressChartPremium(sorted)
+            ProgressChartPremium(sorted, selectedMetric, onOpenSession)
             Spacer(Modifier.height(12.dp))
             sorted.asReversed().take(8).forEachIndexed { index, entry ->
                 val chronologicalIndex = sorted.indexOf(entry)
                 val previous = sorted.getOrNull(chronologicalIndex - 1)
-                SessionRow(entry, previous, newest = index == 0, onDelete = { deleteTarget = entry })
+                SessionRow(
+                    entry = entry,
+                    previous = previous,
+                    selectedMetric = selectedMetric,
+                    newest = index == 0,
+                    onOpen = { onOpenSession(entry.id) },
+                    onDelete = { deleteTarget = entry }
+                )
                 if (index != sorted.asReversed().take(8).lastIndex) Spacer(Modifier.height(8.dp))
             }
         }
@@ -1400,14 +1583,15 @@ private fun EmptyTimeline(sport: Sport) {
 }
 
 @Composable
-private fun TimelineSummary(sorted: List<SessionEntry>) {
-    val latest = sorted.last().score
-    val best = sorted.maxOf { it.score }
-    val change = if (sorted.size > 1) latest - sorted.first().score else 0
+private fun TimelineSummary(sorted: List<SessionEntry>, selectedMetric: String?) {
+    val values = sorted.mapNotNull { sessionValue(it, selectedMetric) }
+    val latest = values.lastOrNull()
+    val best = values.maxOrNull()
+    val change = if (values.size > 1) values.last() - values.first() else 0
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        SummaryStat("LATEST", "$latest", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
-        SummaryStat("BEST", "$best", ScoreHigh, Modifier.weight(1f))
-        SummaryStat("CHANGE", if (change > 0) "+$change" else "$change", if (change >= 0) ScoreHigh else ScoreLow, Modifier.weight(1f))
+        SummaryStat("LATEST", latest?.toString() ?: "—", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+        SummaryStat("BEST", best?.toString() ?: "—", ScoreHigh, Modifier.weight(1f))
+        SummaryStat("CHANGE", if (values.isEmpty()) "—" else if (change > 0) "+$change" else "$change", if (change >= 0) ScoreHigh else ScoreLow, Modifier.weight(1f))
     }
 }
 
@@ -1428,11 +1612,20 @@ private fun SummaryStat(label: String, value: String, color: Color, modifier: Mo
 }
 
 @Composable
-private fun ProgressChartPremium(sorted: List<SessionEntry>) {
+private fun ProgressChartPremium(
+    sorted: List<SessionEntry>,
+    selectedMetric: String?,
+    onOpenSession: (Long) -> Unit
+) {
+    val plotted = sorted.mapNotNull { entry ->
+        sessionValue(entry, selectedMetric)?.let { entry to it }
+    }
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outline.copy(alpha = 0.13f)
     val pointCenter = MaterialTheme.colorScheme.surface
-    val description = "Progress chart from ${sorted.first().score} to ${sorted.last().score} across ${sorted.size} sessions"
+    val metricLabel = selectedMetric ?: "Overall score"
+    val description = if (plotted.isEmpty()) "$metricLabel has no saved data" else
+        "$metricLabel progress from ${plotted.first().second} to ${plotted.last().second} across ${plotted.size} sessions"
     Card(
         shape = CardShape,
         colors = CardDefaults.cardColors(
@@ -1443,7 +1636,7 @@ private fun ProgressChartPremium(sorted: List<SessionEntry>) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Performance trend", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("0—100", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(metricLabel.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
             Spacer(Modifier.height(12.dp))
             Canvas(
@@ -1456,17 +1649,30 @@ private fun ProgressChartPremium(sorted: List<SessionEntry>) {
                     val y = size.height * i / 4f
                     drawLine(grid, Offset(0f, y), Offset(size.width, y), 2f)
                 }
-                if (sorted.size == 1) {
-                    val point = Offset(size.width / 2f, size.height * (1f - sorted[0].score / 100f))
+                if (plotted.size == 1) {
+                    val point = Offset(size.width / 2f, size.height * (1f - plotted[0].second / 100f))
                     drawCircle(line, 10f, point)
                     drawCircle(pointCenter, 4f, point)
-                } else {
-                    val step = size.width / (sorted.size - 1)
-                    val points = sorted.mapIndexed { index, entry -> Offset(step * index, size.height * (1f - entry.score / 100f)) }
+                } else if (plotted.size > 1) {
+                    val step = size.width / (plotted.size - 1)
+                    val points = plotted.mapIndexed { index, (_, value) -> Offset(step * index, size.height * (1f - value / 100f)) }
                     points.zipWithNext().forEach { (a, b) -> drawLine(line, a, b, 7f, StrokeCap.Round) }
                     points.forEach { point ->
                         drawCircle(line, 10f, point)
                         drawCircle(pointCenter, 4f, point)
+                    }
+                }
+            }
+            if (plotted.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { onOpenSession(plotted.first().first.id) }) {
+                        Text(formatSessionDate(plotted.first().first.filmedAtMillis), style = MaterialTheme.typography.labelSmall)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (plotted.size > 1) {
+                        TextButton(onClick = { onOpenSession(plotted.last().first.id) }) {
+                            Text(formatSessionDate(plotted.last().first.filmedAtMillis), style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
@@ -1475,18 +1681,29 @@ private fun ProgressChartPremium(sorted: List<SessionEntry>) {
 }
 
 @Composable
-private fun SessionRow(entry: SessionEntry, previous: SessionEntry?, newest: Boolean, onDelete: () -> Unit) {
-    val delta = previous?.let { entry.score - it.score }
+private fun SessionRow(
+    entry: SessionEntry,
+    previous: SessionEntry?,
+    selectedMetric: String?,
+    newest: Boolean,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val value = sessionValue(entry, selectedMetric)
+    val previousValue = previous?.let { sessionValue(it, selectedMetric) }
+    val delta = if (value != null && previousValue != null) value - previousValue else null
     val deltaColor = when { delta == null -> MaterialTheme.colorScheme.onSurfaceVariant; delta > 0 -> ScoreHigh; delta < 0 -> ScoreLow; else -> ScoreMid }
     Surface(
+        onClick = onOpen,
         shape = CardShape,
         color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
         contentColor = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(50.dp).background(scoreColor(entry.score).copy(alpha = 0.13f), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
-                Text("${entry.score}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = scoreColor(entry.score))
+            val displayValue = value ?: 0
+            Box(Modifier.size(50.dp).background(scoreColor(displayValue).copy(alpha = 0.13f), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
+                Text(value?.toString() ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = scoreColor(displayValue))
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -1504,11 +1721,12 @@ private fun SessionRow(entry: SessionEntry, previous: SessionEntry?, newest: Boo
                     }
                 }
                 Text(
-                    when { delta == null -> "Baseline session"; delta > 0 -> "↑ $delta points from prior"; delta < 0 -> "↓ ${-delta} points from prior"; else -> "No change from prior" },
+                    when { value == null -> "Metric not saved"; delta == null -> "Baseline session"; delta > 0 -> "↑ $delta points from prior"; delta < 0 -> "↓ ${-delta} points from prior"; else -> "No change from prior" },
                     style = MaterialTheme.typography.labelMedium,
                     color = deltaColor,
                     fontWeight = FontWeight.SemiBold
                 )
+                Text("Tap date to open the full analysis", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TextButton(onClick = onDelete, contentPadding = PaddingValues(10.dp)) {
                 Text("×", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1516,6 +1734,9 @@ private fun SessionRow(entry: SessionEntry, previous: SessionEntry?, newest: Boo
         }
     }
 }
+
+private fun sessionValue(entry: SessionEntry, selectedMetric: String?): Int? =
+    if (selectedMetric == null) entry.score else entry.metrics[selectedMetric]
 
 @Composable
 private fun ErrorExperience(message: String, onRetry: () -> Unit) {

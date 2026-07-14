@@ -16,6 +16,12 @@ data class TechniqueReport(
     val overallScore: Int,          // 0..100
     val summary: String,
     val findings: List<Finding>,
-    val detectionRate: Float
+    val detectionRate: Float,
+    /** Per-area metric scores, e.g. "Arm Action" → 85. */
+    val metricScores: Map<String, Int> = emptyMap(),
+    /** A 3–4 sentence AI-generated skill overview. */
+    val aiOverview: String = "",
+    /** AI-picked highlight clips from the analyzed video. */
+    val highlights: List<HighlightClip> = emptyList()
 )
 

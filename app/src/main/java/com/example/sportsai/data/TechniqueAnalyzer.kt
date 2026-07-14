@@ -7,10 +7,12 @@ import com.example.sportsai.model.FramePose
 import com.example.sportsai.model.LandmarkPoint
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
+import com.example.sportsai.model.metrics
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * Rule-based biomechanics engine. Turns the raw pose timeline from [PoseAnalyzer]
@@ -59,7 +61,12 @@ class TechniqueAnalyzer {
             findings = listOf(
                 Finding(FindingType.TIP, "Filming", sport.filmingTip)
             ),
-            detectionRate = result.detectionRate
+            detectionRate = result.detectionRate,
+            metricScores = sport.metrics.associate { it.name to 0 },
+            aiOverview = "The clip did not contain enough consistently visible body positions for a reliable skill rating. " +
+                "That means the current scores should be treated as an incomplete baseline. " +
+                "Record the full movement from the recommended angle with brighter, even lighting. " +
+                "A clearer clip will let SportsAI identify your strongest skill and the next area to improve."
         )
 
     private fun analyzeBaseball(result: AnalysisResult): TechniqueReport {
@@ -195,7 +202,30 @@ class TechniqueAnalyzer {
         score = score.coerceIn(0, 100)
         val summary = buildSummary(score)
 
-        return TechniqueReport(sport, score, summary, findings, result.detectionRate)
+        val armActionScore = when {
+            peakElbowFlex in 70.0..110.0 -> 88
+            peakElbowFlex > 110.0 -> 62
+            else -> 40
+        }
+        val lowerBodyScore = when {
+            maxStrideKneeFlex in 20.0..55.0 -> 85
+            maxStrideKneeFlex > 55.0 -> 42
+            else -> 38
+        }
+        val trunkScore = if (trunkRange >= 15.0) 82 else 40
+        val balanceScore = if (headDrift <= 0.18f) 87 else 38
+        val speedPotentialScore = wristSpeedScore(result.timeline)
+
+        val metricScores = mapOf(
+            "Pitch Speed Potential" to speedPotentialScore,
+            "Arm Action" to armActionScore,
+            "Stride Power" to lowerBodyScore,
+            "Trunk Rotation" to trunkScore,
+            "Balance" to balanceScore
+        )
+        val overview = buildOverview(sport, score, metricScores)
+
+        return TechniqueReport(sport, score, summary, findings, result.detectionRate, metricScores, overview)
     }
 
     private fun buildSummary(score: Int): String = when {
@@ -305,7 +335,27 @@ class TechniqueAnalyzer {
         }
 
         score = score.coerceIn(0, 100)
-        return TechniqueReport(sport, score, buildSummary(score), findings, result.detectionRate)
+
+        val rotationScore = if (trunkRange >= 20.0) 90 else 40
+        val headEyesScore = if (headDrift <= 0.18f) 85 else 38
+        val extensionScore = if (armExtension >= 150.0) 88 else 42
+        val lowerBodyScore = when {
+            maxKneeFlex in 15.0..55.0 -> 82
+            maxKneeFlex < 15.0 -> 35
+            else -> 55
+        }
+        val batSpeedPotential = wristSpeedScore(result.timeline)
+
+        val metricScores = mapOf(
+            "Bat Speed Potential" to batSpeedPotential,
+            "Ball Tracking" to headEyesScore,
+            "Hip Rotation" to rotationScore,
+            "Contact Extension" to extensionScore,
+            "Lower Body Power" to lowerBodyScore
+        )
+        val overview = buildOverview(sport, score, metricScores)
+
+        return TechniqueReport(sport, score, buildSummary(score), findings, result.detectionRate, metricScores, overview)
     }
 
     private fun analyzeBasketball(result: AnalysisResult): TechniqueReport {
@@ -450,7 +500,82 @@ class TechniqueAnalyzer {
         }
 
         score = score.coerceIn(0, 100)
-        return TechniqueReport(sport, score, buildSummary(score), findings, result.detectionRate)
+
+        val setPointScore = when {
+            setBend in 70.0..110.0 -> 90
+            setBend < 70.0 -> 38
+            else -> 55
+        }
+        val followThroughScore = if (maxElbow >= 155.0) 88 else 40
+        val legDriveScore = when {
+            maxKneeFlex in 25.0..70.0 -> 85
+            maxKneeFlex < 25.0 -> 35
+            else -> 55
+        }
+        val alignmentScore = if (alignedRelease) 87 else 40
+        val balanceScore = if (headDrift <= 0.20f) 85 else 38
+        val releaseSpeedScore = wristSpeedScore(result.timeline)
+        val ballTrackingScore = if (headDrift <= 0.20f) 86 else 40
+
+        val metricScores = mapOf(
+            "Release Speed" to releaseSpeedScore,
+            "Ball Tracking" to ballTrackingScore,
+            "Set Point" to setPointScore,
+            "Follow-through" to followThroughScore,
+            "Leg Drive" to legDriveScore,
+            "Alignment" to alignmentScore,
+            "Balance" to balanceScore
+        )
+        val overview = buildOverview(sport, score, metricScores)
+
+        return TechniqueReport(sport, score, buildSummary(score), findings, result.detectionRate, metricScores, overview)
+    }
+
+    private fun buildOverview(sport: String, score: Int, metrics: Map<String, Int>): String {
+        val best = metrics.maxByOrNull { it.value }
+        val worst = metrics.minByOrNull { it.value }
+        val rating = when {
+            score >= 80 -> "excellent"
+            score >= 60 -> "solid"
+            else -> "developing"
+        }
+        return buildString {
+            append("Your $sport technique scores $score/100 overall, showing $rating form. ")
+            if (best != null) append("${best.key} is currently your strongest area at ${best.value}/100. ")
+            if (worst != null && worst.key != best?.key) {
+                append("Your clearest opportunity is ${worst.key}, which scored ${worst.value}/100. ")
+                append("Use the recommended drill in your next session, then compare this metric again to confirm progress.")
+            } else {
+                append("Your measured areas are well balanced. ")
+                append("Keep refining the same movement and compare another clip to confirm that consistency.")
+            }
+        }
+    }
+
+    /** Converts normalized wrist travel into a repeatable 0–100 speed-potential score. */
+    private fun wristSpeedScore(timeline: List<FramePose>): Int {
+        val speeds = timeline.zipWithNext().mapNotNull { (previous, current) ->
+            val elapsedSeconds = (current.timestampMs - previous.timestampMs) / 1_000.0
+            if (elapsedSeconds <= 0.0) return@mapNotNull null
+            val leftShoulder = current.point(LEFT_SHOULDER)
+            val rightShoulder = current.point(RIGHT_SHOULDER)
+            if (leftShoulder == null || rightShoulder == null) return@mapNotNull null
+            val bodyScale = hypot(
+                (rightShoulder.x - leftShoulder.x).toDouble(),
+                (rightShoulder.y - leftShoulder.y).toDouble()
+            ).coerceAtLeast(1.0)
+
+            val wristSpeeds = listOf(LEFT_WRIST, RIGHT_WRIST).mapNotNull { type ->
+                val from = previous.point(type) ?: return@mapNotNull null
+                val to = current.point(type) ?: return@mapNotNull null
+                hypot((to.x - from.x).toDouble(), (to.y - from.y).toDouble()) /
+                    bodyScale / elapsedSeconds
+            }
+            wristSpeeds.maxOrNull()
+        }.sorted()
+        if (speeds.isEmpty()) return 35
+        val representative = speeds[(speeds.lastIndex * 0.8).roundToInt()]
+        return (35.0 + representative * 11.0).roundToInt().coerceIn(35, 96)
     }
 
     // --- Geometry helpers -------------------------------------------------

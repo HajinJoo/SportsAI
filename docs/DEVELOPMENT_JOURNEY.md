@@ -172,6 +172,22 @@ Before publication, the project received:
 - Authentic before/after screenshots
 - Secret scanning and clean-build verification
 
+## 14. Reopening historical analyses
+
+Timeline dates and chart endpoint dates became interactive. A saved session now retains enough structured data to rebuild the complete score, overview, metric, finding, and highlight result instead of opening only a summary row.
+
+## 15. Adding sport-specific improvement metrics
+
+Each movement received a dedicated 0–100 metric set and filterable trend view. The timeline shows whether a metric improved, declined, or stayed level compared with the previous session. Speed entries are explicitly described as pose-based potential scores—not radar-measured ball or bat speed—and ball tracking is presented as a visual/head-stability signal.
+
+## 16. Adding AI skill overviews
+
+Both Gemini and the offline rules path now produce a concise 3–4 sentence overview. It identifies the athlete's current level, strongest metric, clearest opportunity, and a practical direction for the next comparison.
+
+## 17. Creating real editable highlights
+
+Pose timing now identifies peak action, best form, and sport-specific release/contact moments. Android's local media APIs cut those ranges into private MP4 files. Tapping a highlight opens real video playback, and the in-app editor can adjust the start/end boundaries and replace the saved cut.
+
 ## Final architecture snapshot
 
 ```text
@@ -179,6 +195,8 @@ Photo Picker
     -> PoseAnalyzer (ML Kit, local)
     -> TechniqueAnalyzer (local fallback)
     -> GeminiCoach (optional selected-frame analysis)
+    -> HighlightExtractor (AI moment selection)
+    -> VideoClipExporter (private MP4 cut/edit)
     -> AnalysisViewModel
     -> PremiumSportsDashboard
     -> HistoryRepository (local timeline)

@@ -22,8 +22,12 @@ The project began as a single simple upload screen and evolved into a full three
 - **Offline fallback:** an explainable biomechanics rules engine produces feedback if Gemini is unavailable
 - **Skeleton replay:** overlays tracked joints and bones on analyzed motion
 - **Structured report:** overall score, strengths, issues, and actionable drills
-- **Progress timeline:** manually assign a filming date and compare scores across sessions
-- **Private local history:** session summaries are stored in app-private storage
+- **3–4 sentence skill overview:** AI summarizes the athlete's level, strongest area, weakest area, and next direction
+- **Sport-specific improvement filters:** compare pitch-speed potential, bat-speed potential, ball tracking, release speed, balance, and other movement-specific scores
+- **Clickable progress timeline:** tap a chart date or session date to reopen the complete saved analysis
+- **AI-picked video highlights:** key moments are cut into app-private MP4 clips, not just marked on the replay
+- **Built-in highlight editor:** tap a highlight video to correct its start and end, then save a replacement cut
+- **Private local history:** full reports, metric scores, and generated highlight clips are stored in app-private storage
 - **Premium Compose UI:** responsive dashboard, compact floating navigation, dark/light themes, and accessible progress semantics
 - **Adaptive icon:** color and Android 13+ monochrome launcher artwork
 
@@ -46,10 +50,18 @@ Explainable biomechanics rules     Selected JPEG frames
         |                               |
         +---------------+---------------+
                         v
-                 TechniqueReport
+                 TechniqueReport + skill metrics
                         |
-                        v
-          Compose results + local timeline
+        +---------------+----------------+
+        |                                |
+        v                                v
+  Compose results               AI moment selection
+        |                                |
+        v                                v
+  Clickable timeline          App-private MP4 highlights
+                                         |
+                                         v
+                                  In-app video editor
 ```
 
 More detail is available in [Architecture](docs/ARCHITECTURE.md).
@@ -114,13 +126,13 @@ If a key has ever been posted publicly, revoke it in Google AI Studio and genera
 
 ## Privacy
 
-Pose detection runs locally. When Gemini is configured, selected image frames are transmitted to Google's Gemini API for analysis. Timeline entries remain in app-private local storage. Read the complete [Privacy Notes](docs/PRIVACY.md) before testing with another person's video.
+Pose detection and MP4 highlight cutting run locally. When Gemini is configured, selected image frames are transmitted to Google's Gemini API for analysis; the original video and generated MP4 highlights are not sent by this app. Timeline reports and highlight files remain in app-private local storage. Read the complete [Privacy Notes](docs/PRIVACY.md) before testing with another person's video.
 
 ## Project structure
 
 ```text
 app/src/main/java/com/example/sportsai/
-|-- data/        # Pose analysis, Gemini client, rules, local history
+|-- data/        # Pose analysis, Gemini client, rules, local history, MP4 cutting
 |-- model/       # Sports, poses, reports, timeline entries
 |-- ui/          # Premium dashboard and skeleton rendering
 |-- ui/theme/    # Color, typography, shapes
@@ -130,6 +142,7 @@ app/src/main/java/com/example/sportsai/
 ## Documentation
 
 - [Development journey](docs/DEVELOPMENT_JOURNEY.md)
+- [Version 1.1 development record](developement-record.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy notes](docs/PRIVACY.md)
 - [Security policy](SECURITY.md)

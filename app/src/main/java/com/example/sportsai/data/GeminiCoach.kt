@@ -9,6 +9,7 @@ import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
+import com.example.sportsai.model.metrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -97,6 +98,24 @@ class GeminiCoach {
         )
 
         // Ask Gemini to return strict JSON matching our report schema.
+        val metricProperties = JSONObject()
+        val metricRequired = JSONArray()
+        sport.metrics.forEach { metric ->
+            metricProperties.put(
+                metric.name,
+                JSONObject()
+                    .put("type", "INTEGER")
+                    .put("minimum", 0)
+                    .put("maximum", 100)
+                    .put("description", metric.description)
+            )
+            metricRequired.put(metric.name)
+        }
+        val metricScoreSchema = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", metricProperties)
+            .put("required", metricRequired)
+
         val schema = JSONObject()
             .put("type", "OBJECT")
             .put(
@@ -106,9 +125,12 @@ class GeminiCoach {
                     .put("strengths", stringArraySchema())
                     .put("issues", stringArraySchema())
                     .put("tips", stringArraySchema())
+                    .put("metricScores", metricScoreSchema)
+                    .put("overview", JSONObject().put("type", "STRING"))
             )
             .put("required", JSONArray().put("score").put("summary")
-                .put("strengths").put("issues").put("tips"))
+                .put("strengths").put("issues").put("tips")
+                .put("metricScores").put("overview"))
 
         val genConfig = JSONObject()
             .put("responseMimeType", "application/json")
@@ -123,6 +145,9 @@ class GeminiCoach {
         .put("type", "ARRAY")
         .put("items", JSONObject().put("type", "STRING"))
 
+    private fun metricAreasFor(sport: Sport): String =
+        sport.metrics.joinToString { it.name }
+
     private fun promptFor(sport: Sport): String = """
         You are an expert ${sport.displayName} coach analyzing a player from these sequential
         frames of their motion (in order). Assess their technique from what you can see.
@@ -133,6 +158,15 @@ class GeminiCoach {
         - strengths: 1-3 short bullet points on what they do well.
         - issues: 1-3 short bullet points on the biggest problems.
         - tips: 1-3 short, specific drills or cues to improve.
+        - metricScores: a JSON object mapping each of these technique areas to a 0-100 score:
+          ${metricAreasFor(sport)}.
+          e.g. {"Arm Action": 82, "Lower Body": 65, "Trunk": 74, "Balance": 88}.
+        - overview: a 3-4 sentence assessment of the athlete's overall skill. Mention their
+          strongest area, their weakest area, and give a motivational direction for improvement.
+
+        Treat every metric as a comparable 0-100 coaching score. Speed metrics describe visible
+        movement-speed potential, not radar-measured mph or km/h. Ball Tracking describes visible
+        head/eye-line stability and tracking behavior; do not claim measured ball-flight data.
 
         Be specific to ${sport.displayName} mechanics and keep every point concise and friendly.
 
@@ -163,13 +197,35 @@ class GeminiCoach {
         val json = JSONObject(textPart)
         val score = json.optInt("score", 0).coerceIn(0, 100)
         val summary = json.optString("summary", "Analysis complete.")
+        val overview = json.optString("overview", "").ifBlank {
+            "$summary Your overall score is $score/100. Review the metric breakdown to identify " +
+                "your strongest area and the clearest opportunity. Compare another session after practice to confirm progress."
+        }
 
         val findings = mutableListOf<Finding>()
         addFindings(findings, json.optJSONArray("strengths"), FindingType.GOOD, "Strength")
         addFindings(findings, json.optJSONArray("issues"), FindingType.ISSUE, "To fix")
         addFindings(findings, json.optJSONArray("tips"), FindingType.TIP, "Drill")
 
-        return TechniqueReport(sport.displayName, score, summary, findings, detectionRate)
+        // Parse per-area metric scores.
+        val metricScores = linkedMapOf<String, Int>()
+        val metricsObj = json.optJSONObject("metricScores")
+        sport.metrics.forEach { metric ->
+            metricScores[metric.name] = metricsObj
+                ?.optInt(metric.name, 0)
+                ?.coerceIn(0, 100)
+                ?: 0
+        }
+
+        return TechniqueReport(
+            sport = sport.displayName,
+            overallScore = score,
+            summary = summary,
+            findings = findings,
+            detectionRate = detectionRate,
+            metricScores = metricScores,
+            aiOverview = overview
+        )
     }
 
     private fun addFindings(

@@ -160,6 +160,18 @@ fun HomeScreen(
                     Spacer(Modifier.height(32.dp))
                 }
 
+                is AnalysisUiState.ViewingPastSession -> Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    FilmedDateBanner(s.entry.filmedAtMillis)
+                    Spacer(Modifier.height(12.dp))
+                    ReportView(report = s.entry.toTechniqueReport(s.sport))
+                    Spacer(Modifier.height(20.dp))
+                    OutlinedButton(onClick = { viewModel.reset() }) {
+                        Text("Back")
+                    }
+                }
+
                 is AnalysisUiState.Error -> Column(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
