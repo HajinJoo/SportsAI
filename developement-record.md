@@ -24,6 +24,14 @@ Repository: `https://github.com/HajinJoo/SportsAI`
 - Kotlin debug compilation: passed.
 - Unit tests for metric coverage, overview length, highlight ranges, and historical report reconstruction: passed.
 - Android lint, including media flags, picker permissions, storage, Compose, and API checks: passed.
+- Connected-device instrumentation on Samsung SM-S721W / Android API 36: passed.
+
+### APK delivery
+
+- PC: `F:\SportsAI\SportsAI-v1.1-debug.apk`
+- Phone: `/sdcard/Download/SportsAI-v1.1-debug.apk`
+- Installed package: `com.example.sportsai`, version 1.1 (`versionCode` 2)
+- SHA-256: `F5401752D19EC5627CB8F260A1D5C64DDF401758E4DB9BDB82DA0ECA6028E874`
 - Combined `testDebugUnitTest lintDebug assembleDebug` release gate: passed.
 - PC APK: `F:\\SportsAI\\SportsAI-v1.1-debug.apk` (123,946,940 bytes).
 - APK SHA-256: `BAD5BC1DD457A76B467FBD13DF841DB0A26F616C30CED041E578D2BB0F0DA177`.
