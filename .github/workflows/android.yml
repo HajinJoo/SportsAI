@@ -37,6 +37,6 @@ jobs:
       - name: Lint
         run: ./gradlew lintDebug --stacktrace
 
-      - name: Assemble keyless debug build
+      - name: Assemble public bring-your-own-key debug build
         run: ./gradlew assembleDebug --stacktrace
 

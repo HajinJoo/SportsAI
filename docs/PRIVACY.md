@@ -12,18 +12,26 @@ SportsAI analyzes user-selected sports videos. Developers and testers should und
 - AI-selected highlight boundaries
 - Generated MP4 highlight clips stored in app-private files
 - Full timeline reports stored in app-private files
+- A user-provided Gemini API key, encrypted with device-bound Android Keystore key material
 
 ## Data sent to Gemini
 
-When `GEMINI_API_KEY` is configured and analyzed frames are available, SportsAI sends:
+When the device owner saves their own Gemini API key in Settings and analyzed frames are available, SportsAI sends:
 
+- The user-provided API key in Google's `x-goog-api-key` request header
 - Up to six selected JPEG-compressed frames
 - The selected sport name
 - A coaching prompt requesting score, summary, strengths, issues, and tips
 
 The original video file and generated highlight MP4 files are not sent by the current implementation. Google's handling of API requests is governed by the terms and privacy policies applicable to the Gemini API account.
 
-If no key is configured or the request fails, SportsAI uses its local rules engine.
+No developer API key is built into or distributed with SportsAI. If no user key is saved or a request fails, SportsAI uses its local rules engine.
+
+## API key storage
+
+The complete key is accepted only through the protected Settings field and is not displayed again after saving. It is encrypted with AES-GCM using app-specific, non-exportable key material in Android Keystore. The encrypted preferences file is explicitly excluded from Android cloud backup and device transfer. Removing the key from Settings deletes both its ciphertext and Keystore entry.
+
+This protects ordinary data at rest but cannot make a client-side credential immune to extraction on a rooted, compromised, or actively instrumented device. Users should use a dedicated key, monitor quota, and revoke it through Google AI Studio if the phone is lost or compromised.
 
 ## Local timeline storage
 

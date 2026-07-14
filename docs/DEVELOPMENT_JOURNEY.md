@@ -196,6 +196,10 @@ Real-device testing exposed two weaknesses in the first highlight pass: a normal
 
 The platform `VideoView` could prepare a fast local clip before its callback and dialog surface were ready. The result was a black player until the app was backgrounded and resumed. Highlight playback now uses Media3 ExoPlayer attached to a `TextureView`, prepares only while the lifecycle is started, pauses in the background, releases with the dialog, and displays an explicit loading or failure state. Exact seeking and clipping are handled by the player, and a real Samsung test confirmed that a saved highlight rendered and advanced frames on its first open without an app restart.
 
+## 20. Turning the local build into a public bring-your-own-key app
+
+The exact personal/local source was preserved as the `local-v1.3` Git tag. The public 2.0 build removed the Gradle and `BuildConfig` secret path completely, added a fourth Settings destination, and made every APK keyless by default. Each device owner can add, test, replace, or remove their own Gemini key. The saved value is AES-GCM encrypted with Android Keystore key material and excluded from backups and device transfer; SportsAI continues with offline coaching when no key is present or Gemini is unavailable.
+
 ## Final architecture snapshot
 
 ```text
@@ -206,7 +210,7 @@ Photo Picker
     -> HighlightExtractor (AI moment selection)
     -> VideoClipExporter (private MP4 cut/edit)
     -> AnalysisViewModel
-    -> PremiumSportsDashboard
+    -> PremiumSportsDashboard (Home / Upload / Timeline / Settings)
     -> HistoryRepository (local timeline)
 ```
 

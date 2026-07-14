@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sportsai.data.GeminiCoach
+import com.example.sportsai.data.GeminiApiKeyStore
 import com.example.sportsai.data.HighlightExtractor
 import com.example.sportsai.data.HistoryRepository
 import com.example.sportsai.data.PoseAnalyzer
@@ -23,13 +24,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface AnalysisUiState {
     data object Idle : AnalysisUiState
     data class Analyzing(val progress: Float, val stage: Stage = Stage.SCANNING) : AnalysisUiState {
         enum class Stage(val label: String) {
             SCANNING("Tracking your body frame by frame…"),
-            COACHING("Your AI coach is reviewing the clip…")
+            COACHING("Building your coaching report…")
         }
     }
     data class Done(
@@ -61,11 +63,21 @@ sealed interface HighlightEditUiState {
     data class Error(val message: String) : HighlightEditUiState
 }
 
+data class GeminiSettingsUiState(
+    val isLoading: Boolean = true,
+    val configured: Boolean = false,
+    val maskedKey: String? = null,
+    val isTesting: Boolean = false,
+    val statusMessage: String? = null,
+    val isError: Boolean = false
+)
+
 class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
 
     private val analyzer = PoseAnalyzer(app.applicationContext)
     private val techniqueAnalyzer = TechniqueAnalyzer()
-    private val geminiCoach = GeminiCoach()
+    private val geminiApiKeyStore = GeminiApiKeyStore(app.applicationContext)
+    private val geminiCoach = GeminiCoach(geminiApiKeyStore::read)
     private val highlightExtractor = HighlightExtractor()
     private val videoClipExporter = VideoClipExporter(app.applicationContext)
     private val history = HistoryRepository(app.applicationContext)
@@ -83,10 +95,120 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
     private val _highlightEditState = MutableStateFlow<HighlightEditUiState>(HighlightEditUiState.Idle)
     val highlightEditState: StateFlow<HighlightEditUiState> = _highlightEditState.asStateFlow()
 
+    private val _geminiSettings = MutableStateFlow(GeminiSettingsUiState())
+    val geminiSettings: StateFlow<GeminiSettingsUiState> = _geminiSettings.asStateFlow()
+
+    /** Incremented on each settings action so a stale network result cannot overwrite a newer choice. */
+    private var geminiSettingsOperationId = 0L
+
     init {
-        viewModelScope.launch(Dispatchers.IO) {
-            _timeline.value = history.load()
+        val operationId = geminiSettingsOperationId
+        viewModelScope.launch {
+            _timeline.value = withContext(Dispatchers.IO) { history.load() }
+            val savedSettings = withContext(Dispatchers.IO) { readStoredGeminiSettings() }
+            if (operationId == geminiSettingsOperationId) {
+                _geminiSettings.value = savedSettings
+            }
         }
+    }
+
+    fun saveAndTestGeminiApiKey(apiKey: String) {
+        val normalized = apiKey.trim()
+        if (normalized.isEmpty()) {
+            _geminiSettings.value = _geminiSettings.value.copy(
+                isLoading = false,
+                statusMessage = "Enter a Gemini API key first.",
+                isError = true
+            )
+            return
+        }
+
+        val operationId = ++geminiSettingsOperationId
+        _geminiSettings.value = _geminiSettings.value.copy(
+            isLoading = false,
+            isTesting = true,
+            statusMessage = "Encrypting and saving this key…",
+            isError = false
+        )
+        viewModelScope.launch {
+            val saveError = runCatching {
+                withContext(Dispatchers.IO) { geminiApiKeyStore.save(normalized) }
+            }.exceptionOrNull()
+            if (operationId != geminiSettingsOperationId) return@launch
+
+            if (saveError != null) {
+                _geminiSettings.value = readStoredGeminiSettings().copy(
+                    statusMessage = "This key could not be saved securely on the device.",
+                    isError = true
+                )
+                return@launch
+            }
+
+            _geminiSettings.value = readStoredGeminiSettings().copy(
+                isTesting = true,
+                statusMessage = "Key saved. Testing Gemini…"
+            )
+            val result = geminiCoach.testConnection()
+            if (operationId != geminiSettingsOperationId) return@launch
+            _geminiSettings.value = readStoredGeminiSettings().copy(
+                isTesting = false,
+                statusMessage = if (result.successful) {
+                    result.message
+                } else {
+                    "Key saved, but ${result.message.replaceFirstChar { it.lowercase() }}"
+                },
+                isError = !result.successful
+            )
+        }
+    }
+
+    fun testSavedGeminiApiKey() {
+        if (!_geminiSettings.value.configured) {
+            _geminiSettings.value = _geminiSettings.value.copy(
+                isLoading = false,
+                statusMessage = "Add and save an API key before testing Gemini.",
+                isError = true
+            )
+            return
+        }
+
+        val operationId = ++geminiSettingsOperationId
+        _geminiSettings.value = _geminiSettings.value.copy(
+            isTesting = true,
+            statusMessage = "Testing the saved key…",
+            isError = false
+        )
+        viewModelScope.launch {
+            val result = geminiCoach.testConnection()
+            if (operationId != geminiSettingsOperationId) return@launch
+            _geminiSettings.value = readStoredGeminiSettings().copy(
+                statusMessage = result.message,
+                isError = !result.successful
+            )
+        }
+    }
+
+    fun removeGeminiApiKey() {
+        val operationId = ++geminiSettingsOperationId
+        _geminiSettings.value = GeminiSettingsUiState(
+            isLoading = false,
+            statusMessage = "Removing the saved key…"
+        )
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { geminiApiKeyStore.clear() }
+            if (operationId != geminiSettingsOperationId) return@launch
+            _geminiSettings.value = GeminiSettingsUiState(
+                isLoading = false,
+                statusMessage = "API key removed. SportsAI will use offline coaching."
+            )
+        }
+    }
+
+    fun clearGeminiSettingsMessage() {
+        _geminiSettings.value = _geminiSettings.value.copy(
+            statusMessage = null,
+            isError = false
+        )
     }
 
     fun analyze(videoUri: Uri, sport: Sport) {
@@ -119,6 +241,12 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    if (_geminiSettings.value.configured && !_geminiSettings.value.isTesting) {
+                        _geminiSettings.value = _geminiSettings.value.copy(
+                            statusMessage = "Gemini coaching was unavailable, so this report used offline coaching.",
+                            isError = true
+                        )
+                    }
                     techniqueAnalyzer.analyze(result, sport)
                 }
 
@@ -285,6 +413,15 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
         )
         _timeline.value = history.add(entry)
         return entry
+    }
+
+    private fun readStoredGeminiSettings(): GeminiSettingsUiState {
+        val maskedKey = geminiApiKeyStore.maskedKey()
+        return GeminiSettingsUiState(
+            isLoading = false,
+            configured = maskedKey != null,
+            maskedKey = maskedKey
+        )
     }
 
     fun reset() {

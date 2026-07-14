@@ -7,8 +7,7 @@ Contributions are welcome.
 1. Install Android Studio, Android SDK 36, and JDK 17+.
 2. Fork and clone the repository.
 3. Let Android Studio create your machine-local `local.properties`.
-4. Optionally add `GEMINI_API_KEY=...` to that ignored file.
-5. Run verification before opening a pull request:
+4. Run verification before opening a pull request:
 
    ```powershell
    .\gradlew.bat testDebugUnitTest lintDebug assembleDebug
@@ -17,7 +16,8 @@ Contributions are welcome.
 ## Pull requests
 
 - Keep changes focused.
-- Preserve keyless/offline fallback behavior.
+- Preserve the keyless build, per-device Settings flow, and offline fallback behavior.
+- Never add an API key to Gradle, `BuildConfig`, source, tests, screenshots, logs, or fixtures.
 - Do not add a sport without dedicated mechanics, filming guidance, and tests.
 - Include tests for analysis or persistence changes.
 - Include screenshots for meaningful UI changes.

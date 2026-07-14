@@ -4,6 +4,8 @@ SportsAI is an Android coaching app that turns sports clips into practical techn
 
 > **Status:** active prototype. Feedback is educational and is not a replacement for a qualified coach, clinician, or medical professional.
 
+> **Upgrading from 1.3 or earlier:** those local editions supported a build-time key. Do not distribute an older APK that was built with a personal credential; revoke that credential in Google AI Studio, then use the keyless 2.0 build.
+
 ## Final experience
 
 <p align="center">
@@ -12,13 +14,14 @@ SportsAI is an Android coaching app that turns sports clips into practical techn
   <img src="docs/screenshots/timeline.png" width="30%" alt="SportsAI Timeline screen" />
 </p>
 
-The project began as a single simple upload screen and evolved into a full three-destination athlete dashboard. See the complete [development journey](docs/DEVELOPMENT_JOURNEY.md), including an authentic before/after comparison.
+The project began as a single simple upload screen and evolved into a four-destination athlete dashboard with Home, Upload, Timeline, and Settings. See the complete [development journey](docs/DEVELOPMENT_JOURNEY.md), including an authentic before/after comparison.
 
 ## Features
 
 - **Three supported movements:** baseball pitching, baseball batting, and basketball shooting
 - **On-device pose tracking:** samples video frames and detects body landmarks with ML Kit
 - **Optional Gemini coaching:** sends a small set of selected frames for multimodal technique feedback
+- **Bring-your-own Gemini key:** every user can securely add, test, replace, or remove their own API key in Settings; no developer key ships in the app
 - **Offline fallback:** an explainable biomechanics rules engine produces feedback if Gemini is unavailable
 - **Skeleton replay:** overlays tracked joints and bones on analyzed motion
 - **Structured report:** overall score, strengths, issues, and actionable drills
@@ -85,21 +88,13 @@ More detail is available in [Architecture](docs/ARCHITECTURE.md).
 
 2. Open the project in Android Studio and allow Gradle sync to finish.
 
-3. For optional Gemini feedback, add this line to your local `local.properties` file:
-
-   ```properties
-   GEMINI_API_KEY=your_new_key_here
-   ```
-
-   `local.properties` is intentionally ignored by Git. Never commit an API key.
-
-4. Build and test:
+3. Build and test:
 
    ```powershell
    .\gradlew.bat testDebugUnitTest lintDebug assembleDebug
    ```
 
-5. Install on a connected device:
+4. Install on a connected device:
 
    ```powershell
    adb install -r app\build\outputs\apk\debug\app-debug.apk
@@ -107,13 +102,17 @@ More detail is available in [Architecture](docs/ARCHITECTURE.md).
 
 On macOS or Linux, use `./gradlew` and `/` path separators.
 
-## Keyless mode
+5. Open **Settings** in SportsAI. Create your own key in [Google AI Studio](https://aistudio.google.com/apikey), paste it into the protected field, and tap **Save & test key**. This step is optional; offline coaching remains available without a key.
 
-The project builds without `GEMINI_API_KEY`. In that mode, SportsAI uses the local pose pipeline and sport-specific biomechanics rules. This is also how public CI verifies the repository without secrets.
+## Public, keyless build
 
-## API-key warning
+SportsAI 2.0 has no build-time Gemini credential path. Every APK is built keyless and uses the local pose pipeline plus sport-specific biomechanics rules until that device's user adds their own key in Settings. Public CI verifies the same no-secret build.
 
-Android client secrets can be extracted from an APK, even when supplied through `BuildConfig`. The current key approach is intended for development and personal prototypes only. A production release should call Gemini through an authenticated backend with quotas, abuse protection, and key rotation.
+## API-key storage and warning
+
+The user-provided key is encrypted at rest with an app-specific, non-exportable Android Keystore AES key. Its encrypted preferences are excluded from Android cloud backup and device transfer, the complete key is not shown again after saving, and requests send it to Google using the `x-goog-api-key` header.
+
+Client-side storage cannot fully protect an API key on a compromised or instrumented device. Use a dedicated key, monitor quota, and revoke it if the device is lost. A centrally operated production service should still call Gemini through an authenticated backend with quotas, abuse protection, and key rotation.
 
 If a key has ever been posted publicly, revoke it in Google AI Studio and generate a new one.
 
@@ -127,7 +126,7 @@ If a key has ever been posted publicly, revoke it in Google AI Studio and genera
 
 ## Privacy
 
-Pose detection and MP4 highlight cutting run locally. When Gemini is configured, selected image frames are transmitted to Google's Gemini API for analysis; the original video and generated MP4 highlights are not sent by this app. Timeline reports and highlight files remain in app-private local storage. Read the complete [Privacy Notes](docs/PRIVACY.md) before testing with another person's video.
+Pose detection and MP4 highlight cutting run locally. When the device owner enables Gemini, their API key and selected image frames are transmitted to Google's Gemini API for analysis; the original video and generated MP4 highlights are not sent by this app. Timeline reports, the encrypted key, and highlight files remain in app-private local storage. Read the complete [Privacy Notes](docs/PRIVACY.md) before testing with another person's video.
 
 ## Project structure
 
@@ -143,7 +142,7 @@ app/src/main/java/com/example/sportsai/
 ## Documentation
 
 - [Development journey](docs/DEVELOPMENT_JOURNEY.md)
-- [Version 1.3 development record](developement-record.md)
+- [Development record through version 2.0](developement-record.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy notes](docs/PRIVACY.md)
 - [Security policy](SECURITY.md)

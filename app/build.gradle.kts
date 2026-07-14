@@ -3,14 +3,6 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-import java.util.Properties
-
-val localProps = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
-}
-val geminiApiKey: String = localProps.getProperty("GEMINI_API_KEY", "")
-
 android {
     namespace = "com.example.sportsai"
     compileSdk {
@@ -23,12 +15,10 @@ android {
         applicationId = "com.example.sportsai"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
     }
 
     buildTypes {
@@ -46,7 +36,6 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 }
 

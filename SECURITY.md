@@ -15,10 +15,13 @@ Do not include real athlete videos, API keys, access tokens, or personal data in
 
 ## Secrets
 
-- Never commit `local.properties`, `.env` files, keystores, APKs, or API keys.
+- Public builds do not include a SportsAI developer key. Users optionally add their own Gemini key in the app's Settings.
+- User keys are AES-GCM encrypted with non-exportable Android Keystore key material, and the encrypted preferences file is excluded from backup and device transfer.
+- Never commit `local.properties`, `.env` files, keystores, APKs, API keys, or decrypted settings.
 - Treat keys embedded in an Android APK as public and extractable.
 - Rotate any credential that has been pasted into chat, logs, screenshots, commits, or releases.
-- A production deployment should keep Gemini credentials on an authenticated backend.
+- Version 1.3 and earlier local APKs could contain a build-time key. Never redistribute them; revoke any key used to build one before sharing version 2.0.
+- Client-side protection cannot defend a key on a compromised device. A centrally operated production deployment should keep service credentials on an authenticated backend.
 
 ## Supported versions
 

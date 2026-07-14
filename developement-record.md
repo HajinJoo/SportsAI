@@ -102,3 +102,46 @@ Repository: `https://github.com/HajinJoo/SportsAI`
 - Phone APK: `/sdcard/Download/SportsAI-v1.3-debug.apk`
 - Installed package: `com.example.sportsai`, version 1.3 (`versionCode` 4)
 - PC and phone SHA-256: `136B714E25619711F72932FEF02BA66A9C179D850A3E72D484BF7BC129C53296`
+
+## 2026-07-14 — Version 2.0 public bring-your-own-key edition
+
+### Local-version preservation
+
+- Preserved the exact version 1.3 source commit as the annotated Git tag `local-v1.3` and pushed that tag to the public repository.
+- Kept `F:\SportsAI\SportsAI-v1.3-debug.apk` as the personal/local APK snapshot.
+- Version 1.3 and earlier APKs must not be redistributed if they were built with a personal key; that key should be revoked before sharing version 2.0.
+
+### Delivered
+
+- Removed the Gradle `local.properties` Gemini-key reader, generated `BuildConfig` credential, and query-string key transport.
+- Public APKs now ship with no SportsAI developer Gemini key and work in offline mode immediately.
+- Added a fourth Settings destination and a tappable Home badge that clearly shows `OFFLINE` or `GEMINI` status.
+- Added protected key entry plus save-and-test, retest, replace, and confirmed remove flows for each device owner's own API key.
+- Prevented plaintext key input from entering Compose/Android saved-instance state.
+- Encrypts saved keys with AES-256-GCM and a non-exportable app-specific Android Keystore key.
+- Excludes the encrypted preferences file from Android cloud backup and device transfer.
+- Sends authentication only through Google's `x-goog-api-key` request header and never includes the key in a request URL or user-facing error.
+- Updated cloud coaching to the stable `gemini-3.5-flash` model and validates the saved key against that exact model.
+- Preserved automatic offline coaching when no key is saved, a key is rejected, quota is exhausted, or Gemini is unavailable.
+- Updated README, contributing, security, privacy, architecture, CI, and development-journey documentation for the public keyless distribution model.
+- Bumped the Android app to version 2.0 (`versionCode` 5).
+
+### Security and regression coverage
+
+- Added unit coverage for key-provider configuration, stable model selection, and credential-safe error messages.
+- Added a real-device Android Keystore round-trip test that saves, decrypts, masks, verifies ciphertext does not contain plaintext, and removes a test-only credential under an isolated alias/preferences file.
+- Clean-build APK scan confirmed the machine-local Gemini credential is absent.
+- Clean-build APK scan confirmed legacy `GEMINI_API_KEY` and key-in-query markers are absent.
+- APK feature scan confirmed `gemini-3.5-flash`, `x-goog-api-key`, encrypted-settings storage, and Settings actions are present.
+- APK signature verification passed with Android APK Signature Scheme v2.
+
+### Verification and APK delivery
+
+- Clean `testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest` gate: passed with 0 lint errors.
+- Connected-device instrumentation: 2/2 tests passed on Samsung SM-S721W / Android API 36.
+- Real-device cold launch: passed; the Home badge showed `OFFLINE` with no bundled or saved key.
+- Real-device Settings inspection: passed; the BYOK explanation, password field, disabled empty save action, AI Studio action, and four-tab navigation rendered correctly.
+- Installed package: `com.example.sportsai`, version 2.0 (`versionCode` 5).
+- PC APK: `F:\SportsAI\SportsAI-public-v2.0-debug.apk` (132,182,039 bytes).
+- Phone APK: `/sdcard/Download/SportsAI-public-v2.0-debug.apk` (132,182,039 bytes).
+- PC and phone SHA-256: `FBFC9B2EB1950B29CAE93416DF71031C9F1C2B8066DB0E3C604DEE72501DE177`.

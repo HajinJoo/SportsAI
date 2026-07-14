@@ -6,7 +6,8 @@ SportsAI is a single-module Android application built with Kotlin and Jetpack Co
 
 ### UI
 
-- `PremiumDashboard.kt` provides Home, Upload, and Timeline destinations.
+- `PremiumDashboard.kt` provides Home, Upload, Timeline, and Settings destinations.
+- `SettingsScreen.kt` provides the bring-your-own Gemini key controls and security disclosure.
 - `AnimatedSkeleton.kt` and `SkeletonOverlay.kt` render tracked movement.
 - `ui/theme` defines the application color, typography, and shape system.
 
@@ -26,7 +27,8 @@ The ViewModel is scoped above bottom navigation, so changing tabs does not cance
 
 - `PoseAnalyzer`: frame extraction and ML Kit pose detection
 - `TechniqueAnalyzer`: explainable sport-specific biomechanics rules
-- `GeminiCoach`: optional Gemini multimodal analysis
+- `GeminiCoach`: optional Gemini 3.5 Flash multimodal analysis using the current device user's key
+- `GeminiApiKeyStore`: AES-GCM encryption backed by a non-exportable Android Keystore key
 - `HighlightExtractor`: pose-timeline ranking for release, contact, form, and peak-action moments
 - `HighlightExtractor`: normalized, smoothed sport-specific action scoring for pitch release, swing contact, and shot release
 - `VideoClipExporter`: local Media3 Transformer clipping for precise MP4 cutting and re-cutting
@@ -43,7 +45,7 @@ Models represent landmarks, frame poses, animation frames, sports, findings, rep
 2. `PoseAnalyzer` samples approximately five frames per second.
 3. ML Kit detects landmarks on each sampled bitmap.
 4. The analyzer stores a timeline, best key frame, and downscaled replay frames.
-5. If a Gemini key and pose frames are available, `GeminiCoach` requests structured coaching.
+5. If the device user has saved a Gemini key and pose frames are available, `GeminiCoach` requests structured coaching using the `x-goog-api-key` header.
 6. If that request cannot run, `TechniqueAnalyzer` generates a local report.
 7. `HighlightExtractor` selects the most useful movement moments.
 8. `VideoClipExporter` cuts those ranges into separate app-private MP4 files.
@@ -55,9 +57,9 @@ Models represent landmarks, frame poses, animation frames, sports, findings, rep
 
 The app does not upload the original video. When Gemini is configured, up to six selected frames are JPEG-compressed and included in a Gemini API request. See [Privacy Notes](PRIVACY.md).
 
-## Keyless operation
+## Bring-your-own-key operation
 
-`app/build.gradle.kts` reads `GEMINI_API_KEY` from ignored `local.properties`. Missing configuration becomes an empty `BuildConfig` value, allowing local rules and CI builds to work without secrets.
+Gradle has no API-key input and the APK contains no SportsAI developer credential. `GeminiApiKeyStore` encrypts a user-entered key with AES-GCM and keeps the wrapping key inside Android Keystore. Settings can save and validate, replace, or remove it. The encrypted preferences file is excluded from cloud backup and device transfer because its Keystore key is device-bound. Without a saved key, local rules and CI builds work normally.
 
 ## Main dependencies
 
@@ -66,6 +68,7 @@ The app does not upload the original video. When Gemini is configured, up to six
 - Kotlin coroutines
 - ML Kit Accurate Pose Detection
 - Coil Compose
+- Media3 ExoPlayer and Transformer
 
 ## Storage
 

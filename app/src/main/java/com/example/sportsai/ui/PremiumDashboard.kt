@@ -118,7 +118,8 @@ private val SmallShape = RoundedCornerShape(14.dp)
 private enum class DashboardTab(val label: String) {
     HOME("Home"),
     UPLOAD("Upload"),
-    TIMELINE("Timeline")
+    TIMELINE("Timeline"),
+    SETTINGS("Settings")
 }
 
 @Composable
@@ -130,6 +131,7 @@ fun PremiumSportsDashboard(
     val timeline by viewModel.timeline.collectAsStateWithLifecycle()
     val selectedMetric by viewModel.selectedMetric.collectAsStateWithLifecycle()
     val highlightEditState by viewModel.highlightEditState.collectAsStateWithLifecycle()
+    val geminiSettings by viewModel.geminiSettings.collectAsStateWithLifecycle()
     var selectedSport by rememberSaveable { mutableStateOf(Sport.BASEBALL_PITCH) }
     var selectedTab by rememberSaveable { mutableStateOf(DashboardTab.HOME) }
 
@@ -170,7 +172,11 @@ fun PremiumSportsDashboard(
                 ) {
                     item {
                         Column(Modifier.widthIn(max = 760.dp)) {
-                            BrandBar()
+                            BrandBar(
+                                geminiConfigured = geminiSettings.configured,
+                                geminiSettingsLoading = geminiSettings.isLoading,
+                                onOpenSettings = { selectedTab = DashboardTab.SETTINGS }
+                            )
                             Spacer(Modifier.height(22.dp))
                         }
                     }
@@ -235,6 +241,14 @@ fun PremiumSportsDashboard(
                                         selectedTab = DashboardTab.UPLOAD
                                     }
                                 )
+
+                                DashboardTab.SETTINGS -> SettingsDestination(
+                                    state = geminiSettings,
+                                    onSaveAndTest = viewModel::saveAndTestGeminiApiKey,
+                                    onTestSavedKey = viewModel::testSavedGeminiApiKey,
+                                    onRemoveKey = viewModel::removeGeminiApiKey,
+                                    onDismissMessage = viewModel::clearGeminiSettingsMessage
+                                )
                             }
                         }
                     }
@@ -281,7 +295,11 @@ private fun PremiumBackground(modifier: Modifier, content: @Composable () -> Uni
 }
 
 @Composable
-private fun BrandBar() {
+private fun BrandBar(
+    geminiConfigured: Boolean,
+    geminiSettingsLoading: Boolean,
+    onOpenSettings: () -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -301,25 +319,42 @@ private fun BrandBar() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        val badgeColor = when {
+            geminiSettingsLoading -> SkyCyan
+            geminiConfigured -> MaterialTheme.colorScheme.primary
+            else -> WarnAmber
+        }
         Surface(
+            onClick = onOpenSettings,
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-            contentColor = MaterialTheme.colorScheme.primary,
+            color = badgeColor.copy(alpha = 0.12f),
+            contentColor = badgeColor,
             border = androidx.compose.foundation.BorderStroke(
-                1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-            )
+                1.dp, badgeColor.copy(alpha = 0.28f)
+            ),
+            modifier = Modifier.semantics {
+                contentDescription = "AI settings: ${when {
+                    geminiSettingsLoading -> "checking"
+                    geminiConfigured -> "Gemini key saved"
+                    else -> "offline coaching"
+                }}"
+            }
         ) {
             Row(
                 Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+                Box(Modifier.size(7.dp).background(badgeColor, CircleShape))
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    "AI COACH",
+                    when {
+                        geminiSettingsLoading -> "CHECKING"
+                        geminiConfigured -> "GEMINI"
+                        else -> "OFFLINE"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = badgeColor
                 )
             }
         }
@@ -362,7 +397,7 @@ private fun DashboardBottomBar(
     ) {
         Surface(
             modifier = Modifier
-                .widthIn(max = 340.dp)
+                .widthIn(max = 390.dp)
                 .fillMaxWidth()
                 .height(60.dp),
             shape = CircleShape,
@@ -454,6 +489,7 @@ private fun DashboardBottomBar(
 
 @Composable
 private fun DashboardTabIcon(tab: DashboardTab, color: Color, modifier: Modifier = Modifier) {
+    val knobCenterColor = MaterialTheme.colorScheme.surfaceContainerHigh
     Canvas(modifier) {
         val stroke = 2.dp.toPx()
         when (tab) {
@@ -487,6 +523,21 @@ private fun DashboardTabIcon(tab: DashboardTab, color: Color, modifier: Modifier
                 drawPath(trend, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
                 drawCircle(color, stroke * 1.15f, Offset(size.width * 0.12f, size.height * 0.76f))
                 drawCircle(color, stroke * 1.15f, Offset(size.width * 0.88f, size.height * 0.25f))
+            }
+            DashboardTab.SETTINGS -> {
+                val left = size.width * 0.16f
+                val right = size.width * 0.84f
+                val ys = listOf(size.height * 0.25f, size.height * 0.50f, size.height * 0.75f)
+                val knobs = listOf(size.width * 0.36f, size.width * 0.68f, size.width * 0.46f)
+                ys.forEachIndexed { index, y ->
+                    drawLine(color, Offset(left, y), Offset(right, y), stroke, StrokeCap.Round)
+                    drawCircle(color, stroke * 1.6f, Offset(knobs[index], y))
+                    drawCircle(
+                        knobCenterColor,
+                        stroke * 0.72f,
+                        Offset(knobs[index], y)
+                    )
+                }
             }
         }
     }

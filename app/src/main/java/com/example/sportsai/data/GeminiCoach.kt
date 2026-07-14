@@ -2,7 +2,6 @@ package com.example.sportsai.data
 
 import android.graphics.Bitmap
 import android.util.Base64
-import com.example.sportsai.BuildConfig
 import com.example.sportsai.model.AnalysisResult
 import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.Finding
@@ -15,6 +14,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -23,13 +23,20 @@ import java.net.URL
  * and asks it to coach the athlete's technique. Gemini looks at the actual images,
  * so the analysis and feedback are AI-generated, not just rule-based.
  */
-class GeminiCoach {
+data class GeminiConnectionResult(
+    val successful: Boolean,
+    val message: String
+)
 
-    private val model = "gemini-2.5-flash"
+class GeminiCoach(private val apiKeyProvider: () -> String?) {
+
+    private val model = MODEL
     private val endpoint =
         "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+    private val modelEndpoint =
+        "https://generativelanguage.googleapis.com/v1beta/models/$model"
 
-    val isConfigured: Boolean get() = BuildConfig.GEMINI_API_KEY.isNotBlank()
+    val isConfigured: Boolean get() = !apiKeyProvider().isNullOrBlank()
 
     /**
      * @param frames the analyzed frames (bitmap + pose); a spread is sent to Gemini.
@@ -41,32 +48,67 @@ class GeminiCoach {
         result: AnalysisResult,
         sport: Sport
     ): TechniqueReport = withContext(Dispatchers.IO) {
-        require(isConfigured) { "Gemini API key not configured" }
+        val apiKey = apiKeyProvider()?.trim().orEmpty()
+        require(apiKey.isNotEmpty()) { "Gemini API key not configured" }
 
         val selected = pickFrames(frames, max = 6)
         val body = buildRequest(selected, sport)
 
-        val conn = (URL("$endpoint?key=${BuildConfig.GEMINI_API_KEY}").openConnection()
+        val conn = (URL(endpoint).openConnection()
                 as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
             connectTimeout = 30_000
             readTimeout = 60_000
             setRequestProperty("Content-Type", "application/json")
+            setRequestProperty(API_KEY_HEADER, apiKey)
         }
 
-        conn.outputStream.use { it.write(body.toString().toByteArray()) }
+        try {
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
 
-        val code = conn.responseCode
-        val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
-            ?.bufferedReader()?.use { it.readText() } ?: ""
-        conn.disconnect()
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() } ?: ""
 
-        if (code !in 200..299) {
-            throw RuntimeException("Gemini error $code: ${text.take(300)}")
+            if (code !in 200..299) {
+                throw RuntimeException(connectionMessage(code))
+            }
+
+            parseReport(text, sport, result.detectionRate)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Validates a saved key against the exact Gemini model used for coaching. */
+    suspend fun testConnection(): GeminiConnectionResult = withContext(Dispatchers.IO) {
+        val apiKey = apiKeyProvider()?.trim().orEmpty()
+        if (apiKey.isEmpty()) {
+            return@withContext GeminiConnectionResult(false, "Add an API key before testing Gemini.")
         }
 
-        parseReport(text, sport, result.detectionRate)
+        val connection = (URL(modelEndpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 20_000
+            setRequestProperty(API_KEY_HEADER, apiKey)
+        }
+        try {
+            val code = connection.responseCode
+            (if (code in 200..299) connection.inputStream else connection.errorStream)?.close()
+            if (code in 200..299) {
+                GeminiConnectionResult(true, "Connected to Gemini 3.5 Flash.")
+            } else {
+                GeminiConnectionResult(false, connectionMessage(code))
+            }
+        } catch (_: IOException) {
+            GeminiConnectionResult(false, "Could not reach Gemini. Check your internet connection and try again.")
+        } catch (_: Exception) {
+            GeminiConnectionResult(false, "Gemini could not be tested right now. Try again in a moment.")
+        } finally {
+            connection.disconnect()
+        }
     }
 
     // --- Request building -------------------------------------------------
@@ -238,6 +280,19 @@ class GeminiCoach {
         for (i in 0 until array.length()) {
             val msg = array.optString(i).trim()
             if (msg.isNotEmpty()) target.add(Finding(type, area, msg))
+        }
+    }
+
+    companion object {
+        const val MODEL = "gemini-3.5-flash"
+        private const val API_KEY_HEADER = "x-goog-api-key"
+
+        internal fun connectionMessage(statusCode: Int): String = when (statusCode) {
+            400, 401, 403 -> "Google rejected this API key. Check the key in Google AI Studio and try again."
+            404 -> "Gemini 3.5 Flash is not available for this API key or region."
+            429 -> "Gemini reached its quota or rate limit. Check this key's usage in Google AI Studio."
+            in 500..599 -> "Gemini is temporarily unavailable. Try again shortly."
+            else -> "Gemini connection failed (HTTP $statusCode)."
         }
     }
 }
