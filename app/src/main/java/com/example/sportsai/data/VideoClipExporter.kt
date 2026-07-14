@@ -1,19 +1,26 @@
 package com.example.sportsai.data
 
 import android.content.Context
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaFormat
-import android.media.MediaMetadataRetriever
-import android.media.MediaMuxer
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
 import com.example.sportsai.model.HighlightClip
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.nio.ByteBuffer
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
-/** Creates app-private MP4 highlight files without uploading the source video. */
+/** Creates precise app-private MP4 highlight files without uploading the source video. */
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 class VideoClipExporter(context: Context) {
 
     private val appContext = context.applicationContext
@@ -23,26 +30,35 @@ class VideoClipExporter(context: Context) {
         sourceUri: Uri,
         clip: HighlightClip,
         sessionId: Long
-    ): HighlightClip = withContext(Dispatchers.IO) {
+    ): HighlightClip {
         require(clip.endMs > clip.startMs) { "Highlight end must be after its start" }
-        val outputDirectory = safeExistingParent(clip.videoPath)
-            ?: File(root, sessionId.toString()).apply { mkdirs() }
-        val target = File(outputDirectory, "highlight_${clip.id}.mp4")
-        val temporary = File(outputDirectory, "highlight_${clip.id}_${System.nanoTime()}.tmp.mp4")
+        val (target, temporary) = withContext(Dispatchers.IO) {
+            val outputDirectory = safeExistingParent(clip.videoPath)
+                ?: File(root, sessionId.toString()).apply { mkdirs() }
+            val target = File(outputDirectory, "highlight_${clip.id}.mp4")
+            val temporary = File(
+                outputDirectory,
+                "highlight_${clip.id}_${System.nanoTime()}.tmp.mp4"
+            )
+            temporary.delete()
+            target to temporary
+        }
 
         try {
-            remuxRange(sourceUri, clip.startMs, clip.endMs, temporary)
-            check(temporary.length() > 0L) { "The highlight video was empty" }
-            if (target.exists() && !target.delete()) {
-                error("Could not replace the previous highlight")
+            exportExactRange(sourceUri, clip.startMs, clip.endMs, temporary)
+            return withContext(Dispatchers.IO) {
+                check(temporary.length() > 0L) { "The highlight video was empty" }
+                if (target.exists() && !target.delete()) {
+                    error("Could not replace the previous highlight")
+                }
+                if (!temporary.renameTo(target)) {
+                    temporary.copyTo(target, overwrite = true)
+                    temporary.delete()
+                }
+                clip.copy(videoPath = target.absolutePath)
             }
-            if (!temporary.renameTo(target)) {
-                temporary.copyTo(target, overwrite = true)
-                temporary.delete()
-            }
-            clip.copy(videoPath = target.absolutePath)
         } catch (error: Exception) {
-            temporary.delete()
+            withContext(Dispatchers.IO) { temporary.delete() }
             throw error
         }
     }
@@ -54,93 +70,61 @@ class VideoClipExporter(context: Context) {
         }
     }
 
-    private fun remuxRange(sourceUri: Uri, startMs: Long, endMs: Long, output: File) {
+    /**
+     * Media3 decodes around non-keyframe boundaries, so the saved file starts at the selected
+     * action instead of silently including everything from an older keyframe.
+     */
+    private suspend fun exportExactRange(
+        sourceUri: Uri,
+        startMs: Long,
+        endMs: Long,
+        output: File
+    ) = withContext(Dispatchers.Main.immediate) {
         output.parentFile?.mkdirs()
-        val extractor = MediaExtractor()
-        var muxer: MediaMuxer? = null
-        var muxerStarted = false
-        try {
-            extractor.setDataSource(appContext, sourceUri, null)
-            muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            readRotation(sourceUri)?.let(muxer::setOrientationHint)
-
-            val trackMap = mutableMapOf<Int, Int>()
-            var bufferSize = DEFAULT_BUFFER_SIZE
-            for (trackIndex in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(trackIndex)
-                val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
-                if (!mime.startsWith("video/") && !mime.startsWith("audio/")) continue
-                extractor.selectTrack(trackIndex)
-                trackMap[trackIndex] = muxer.addTrack(format)
-                if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                    bufferSize = maxOf(bufferSize, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
-                }
-            }
-            check(trackMap.isNotEmpty()) { "No audio or video track was found" }
-
-            muxer.start()
-            muxerStarted = true
-            val buffer = ByteBuffer.allocateDirect(bufferSize.coerceAtMost(MAX_BUFFER_SIZE))
-            val info = MediaCodec.BufferInfo()
-            val requestedStartUs = startMs.coerceAtLeast(0L) * 1_000L
-            val requestedEndUs = endMs * 1_000L
-            extractor.seekTo(requestedStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-
-            var firstSampleUs = -1L
-            var samplesWritten = 0
-            while (true) {
-                val sampleTimeUs = extractor.sampleTime
-                if (sampleTimeUs < 0L || sampleTimeUs > requestedEndUs) break
-                val sourceTrack = extractor.sampleTrackIndex
-                val destinationTrack = trackMap[sourceTrack]
-                if (destinationTrack == null) {
-                    if (!extractor.advance()) break
-                    continue
-                }
-
-                buffer.clear()
-                val sampleSize = extractor.readSampleData(buffer, 0)
-                if (sampleSize < 0) break
-                if (firstSampleUs < 0L) firstSampleUs = sampleTimeUs
-                val extractorFlags = extractor.sampleFlags
-                check(extractorFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED == 0) {
-                    "Encrypted videos cannot be cut into a local highlight"
-                }
-                var codecFlags = 0
-                if (extractorFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) {
-                    codecFlags = codecFlags or MediaCodec.BUFFER_FLAG_KEY_FRAME
-                }
-                if (extractorFlags and MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME != 0) {
-                    codecFlags = codecFlags or MediaCodec.BUFFER_FLAG_PARTIAL_FRAME
-                }
-                info.set(
-                    0,
-                    sampleSize,
-                    (sampleTimeUs - firstSampleUs).coerceAtLeast(0L),
-                    codecFlags
+        suspendCancellableCoroutine { continuation ->
+            val mediaItem = MediaItem.Builder()
+                .setUri(sourceUri)
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(startMs.coerceAtLeast(0L))
+                        .setEndPositionMs(endMs)
+                        .build()
                 )
-                muxer.writeSampleData(destinationTrack, buffer, info)
-                samplesWritten++
-                if (!extractor.advance()) break
+                .build()
+            val editedMediaItem = EditedMediaItem.Builder(mediaItem).build()
+            lateinit var transformer: Transformer
+            transformer = Transformer.Builder(appContext)
+                .addListener(
+                    object : Transformer.Listener {
+                        override fun onCompleted(
+                            composition: Composition,
+                            exportResult: ExportResult
+                        ) {
+                            if (continuation.isActive) continuation.resume(Unit)
+                        }
+
+                        override fun onError(
+                            composition: Composition,
+                            exportResult: ExportResult,
+                            exportException: ExportException
+                        ) {
+                            if (continuation.isActive) {
+                                continuation.resumeWithException(exportException)
+                            }
+                        }
+                    }
+                )
+                .build()
+            continuation.invokeOnCancellation {
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    transformer.cancel()
+                } else {
+                    Handler(Looper.getMainLooper()).post(transformer::cancel)
+                }
             }
-            check(samplesWritten > 0) { "No video samples were found inside that range" }
-        } finally {
-            extractor.release()
-            if (muxerStarted) runCatching { muxer?.stop() }
-            runCatching { muxer?.release() }
+            transformer.start(editedMediaItem, output.absolutePath)
         }
     }
-
-    private fun readRotation(sourceUri: Uri): Int? = runCatching {
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(appContext, sourceUri)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
-                ?.toIntOrNull()
-        } finally {
-            retriever.release()
-        }
-    }.getOrNull()
 
     private fun safeExistingParent(videoPath: String): File? {
         if (videoPath.isBlank()) return null
@@ -151,9 +135,4 @@ class VideoClipExporter(context: Context) {
     private fun isInsideRoot(file: File): Boolean = runCatching {
         file.canonicalPath.startsWith(root.canonicalPath + File.separator)
     }.getOrDefault(false)
-
-    private companion object {
-        const val DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024
-        const val MAX_BUFFER_SIZE = 32 * 1024 * 1024
-    }
 }

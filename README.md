@@ -25,8 +25,9 @@ The project began as a single simple upload screen and evolved into a full three
 - **3–4 sentence skill overview:** AI summarizes the athlete's level, strongest area, weakest area, and next direction
 - **Sport-specific improvement filters:** compare pitch-speed potential, bat-speed potential, ball tracking, release speed, balance, and other movement-specific scores
 - **Clickable progress timeline:** tap a chart date or session date to reopen the complete saved analysis
-- **AI-picked video highlights:** key moments are cut into app-private MP4 clips, not just marked on the replay
-- **Built-in highlight editor:** tap a highlight video to correct its start and end, then save a replacement cut
+- **Sport-aware video highlight:** pitching, batting, and shooting each use movement-specific action scoring to select one focused play
+- **Immediate highlight playback:** tap the highlight card to watch the exact selected range, with its private MP4 as a fallback
+- **Precise highlight editor:** adjust the start and end, preview the source range, then save a replacement cut without earlier keyframe footage
 - **Private local history:** full reports, metric scores, and generated highlight clips are stored in app-private storage
 - **Premium Compose UI:** responsive dashboard, compact floating navigation, dark/light themes, and accessible progress semantics
 - **Adaptive icon:** color and Android 13+ monochrome launcher artwork
@@ -142,7 +143,7 @@ app/src/main/java/com/example/sportsai/
 ## Documentation
 
 - [Development journey](docs/DEVELOPMENT_JOURNEY.md)
-- [Version 1.1 development record](developement-record.md)
+- [Version 1.2 development record](developement-record.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy notes](docs/PRIVACY.md)
 - [Security policy](SECURITY.md)

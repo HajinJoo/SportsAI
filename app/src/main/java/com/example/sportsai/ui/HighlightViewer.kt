@@ -102,7 +102,7 @@ fun HighlightsSection(
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            "SportsAI picked the strongest moments and cut them into separate videos. Tap a video to watch it or fix the start and end.",
+            "SportsAI found the strongest complete action and cut it into a focused video. Tap it to watch immediately or adjust the start and end.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -271,10 +271,13 @@ private fun HighlightViewerDialog(
     var editEnd by remember(clip.id) { mutableFloatStateOf(clip.endMs.toFloat()) }
     val maxTime = maxOf(videoDurationMs, clip.endMs + 500L, 1_000L).toFloat()
     val canEditOriginal = sourceVideoUri.isNotBlank()
-    val playbackUri = if (isEditing && canEditOriginal) sourceVideoUri else clip.videoPath
-    val playbackStart = if (isEditing && canEditOriginal) editStart.toLong() else 0L
-    val playbackEnd = if (isEditing && canEditOriginal) editEnd.toLong()
+    // Prefer the source for both viewing and editing: it is already known to be playable and lets
+    // us seek to the exact selected action. The generated MP4 remains a viewing fallback.
+    val playbackUri = if (canEditOriginal) sourceVideoUri else clip.videoPath
+    val playbackStart = if (canEditOriginal) editStart.toLong() else 0L
+    val playbackEnd = if (canEditOriginal) editEnd.toLong()
     else (clip.endMs - clip.startMs).coerceAtLeast(250L)
+    val fallbackUri = if (!isEditing && canEditOriginal) clip.videoPath else ""
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -312,6 +315,8 @@ private fun HighlightViewerDialog(
                             uriString = playbackUri,
                             startMs = playbackStart,
                             endMs = playbackEnd,
+                            fallbackUriString = fallbackUri,
+                            fallbackEndMs = (clip.endMs - clip.startMs).coerceAtLeast(250L),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(16f / 9f)
@@ -345,7 +350,7 @@ private fun HighlightViewerDialog(
                     if (isEditing) {
                         Spacer(Modifier.height(12.dp))
                         Text(
-                            "Move either boundary, then preview the selected section. MP4 cuts snap to a nearby video keyframe.",
+                            "Move either boundary, then preview the exact selected section before saving the new cut.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -373,7 +378,11 @@ private fun HighlightViewerDialog(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (isEditing) {
                             OutlinedButton(
-                                onClick = { isEditing = false },
+                                onClick = {
+                                    editStart = clip.startMs.toFloat()
+                                    editEnd = clip.endMs.toFloat()
+                                    isEditing = false
+                                },
                                 modifier = Modifier.weight(1f).height(48.dp),
                                 enabled = !isSaving,
                                 shape = RoundedCornerShape(14.dp)
@@ -441,41 +450,69 @@ private fun HighlightVideoPlayer(
     uriString: String,
     startMs: Long,
     endMs: Long,
+    fallbackUriString: String = "",
+    fallbackEndMs: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     var player by remember { mutableStateOf<VideoView?>(null) }
-    AndroidView(
-        modifier = modifier.background(Color.Black),
-        factory = { context ->
-            VideoView(context).apply {
-                val controls = MediaController(context)
-                controls.setAnchorView(this)
-                setMediaController(controls)
-                player = this
-            }
-        },
-        update = { view ->
-            val playbackKey = "$uriString:$startMs"
-            if (view.tag != playbackKey) {
-                view.tag = playbackKey
-                val uri = if (uriString.contains("://")) Uri.parse(uriString)
-                else Uri.fromFile(File(uriString))
-                view.setVideoURI(uri)
-                view.setOnPreparedListener {
-                    view.seekTo(startMs.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
-                    view.start()
+    var useFallback by remember(uriString, fallbackUriString) { mutableStateOf(false) }
+    var playbackFailed by remember(uriString, fallbackUriString) { mutableStateOf(false) }
+    val activeUri = if (useFallback) fallbackUriString else uriString
+    val activeStart = if (useFallback) 0L else startMs
+    val activeEnd = if (useFallback) fallbackEndMs else endMs
+
+    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                VideoView(context).apply {
+                    val controls = MediaController(context)
+                    controls.setAnchorView(this)
+                    setMediaController(controls)
+                    player = this
+                }
+            },
+            update = { view ->
+                val playbackKey = "$activeUri:$activeStart:$activeEnd"
+                if (activeUri.isNotBlank() && view.tag != playbackKey) {
+                    view.tag = playbackKey
+                    view.setOnErrorListener { _, _, _ ->
+                        if (!useFallback && fallbackUriString.isNotBlank()) {
+                            useFallback = true
+                        } else {
+                            playbackFailed = true
+                        }
+                        true
+                    }
+                    val uri = if (activeUri.contains("://")) Uri.parse(activeUri)
+                    else Uri.fromFile(File(activeUri))
+                    view.setVideoURI(uri)
+                    view.setOnPreparedListener {
+                        playbackFailed = false
+                        view.seekTo(activeStart.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                        view.start()
+                    }
                 }
             }
+        )
+        if (playbackFailed) {
+            Text(
+                "Video preview unavailable",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(20.dp)
+            )
         }
-    )
+    }
 
-    LaunchedEffect(player, startMs, endMs) {
+    LaunchedEffect(player, activeUri, activeStart, activeEnd) {
         val view = player ?: return@LaunchedEffect
         while (true) {
             delay(120)
-            val actualEnd = if (view.duration > 0) minOf(endMs, view.duration.toLong()) else endMs
+            val actualEnd = if (view.duration > 0) minOf(activeEnd, view.duration.toLong()) else activeEnd
             if (view.currentPosition.toLong() >= actualEnd - 40L) {
-                view.seekTo(startMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                view.seekTo(activeStart.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
                 view.start()
             }
         }

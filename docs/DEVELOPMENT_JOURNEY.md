@@ -188,6 +188,10 @@ Both Gemini and the offline rules path now produce a concise 3–4 sentence over
 
 Pose timing now identifies peak action, best form, and sport-specific release/contact moments. Android's local media APIs cut those ranges into private MP4 files. Tapping a highlight opens real video playback, and the in-app editor can adjust the start/end boundaries and replace the saved cut.
 
+## 18. Making highlights focused and dependable
+
+Real-device testing exposed two weaknesses in the first highlight pass: a normal tap used the generated file while the editor used the more reliable source URI, and keyframe-based remuxing could include video from well before the selected action. Playback now opens the exact source range immediately and falls back to the private clip only when needed. Media3 Transformer creates precise replacement clips, while a smoothed, body-normalized selector chooses one complete sport-specific action using release-arm speed and extension for pitching, hand speed and torso rotation for batting, or upward release, elbow extension, and leg drive for basketball shooting. Static poses and isolated one-frame tracking jumps are rejected.
+
 ## Final architecture snapshot
 
 ```text

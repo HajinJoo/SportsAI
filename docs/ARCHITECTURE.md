@@ -28,7 +28,8 @@ The ViewModel is scoped above bottom navigation, so changing tabs does not cance
 - `TechniqueAnalyzer`: explainable sport-specific biomechanics rules
 - `GeminiCoach`: optional Gemini multimodal analysis
 - `HighlightExtractor`: pose-timeline ranking for release, contact, form, and peak-action moments
-- `VideoClipExporter`: local `MediaExtractor`/`MediaMuxer` MP4 cutting and re-cutting
+- `HighlightExtractor`: normalized, smoothed sport-specific action scoring for pitch release, swing contact, and shot release
+- `VideoClipExporter`: local Media3 Transformer clipping for precise MP4 cutting and re-cutting
 - `HistoryRepository`: app-private JSON timeline persistence
 
 ### Models

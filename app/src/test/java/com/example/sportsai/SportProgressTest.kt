@@ -41,6 +41,46 @@ class SportProgressTest {
     }
 
     @Test
+    fun highlightExtractorReturnsOneSportSpecificActionInsteadOfGenericClips() {
+        val expectedLabels = mapOf(
+            Sport.BASEBALL_PITCH to "Best pitch · release",
+            Sport.BASEBALL_BAT to "Best swing · contact",
+            Sport.BASKETBALL_SHOT to "Best shot · release"
+        )
+
+        expectedLabels.forEach { (sport, label) ->
+            val highlights = HighlightExtractor().extract(clearActionResult(), sport, maxClips = 3)
+
+            assertEquals("Expected one focused highlight for $sport", 1, highlights.size)
+            val highlight = highlights.single()
+            assertEquals(label, highlight.label)
+            assertTrue("The selected range should include the action", 2_000L in highlight.startMs..highlight.endMs)
+            assertTrue("The clip should exclude idle video at the beginning", highlight.startMs > 0L)
+            assertTrue("The clip should exclude idle video at the end", highlight.endMs < 4_000L)
+        }
+    }
+
+    @Test
+    fun highlightExtractorDoesNotCallAStaticPoseAHighlight() {
+        val stillFrames = (0..10).map { index ->
+            FramePose(
+                timestampMs = index * 200L,
+                landmarks = actionLandmarks(0f)
+            )
+        }
+        val result = AnalysisResult(
+            framesSampled = stillFrames.size,
+            framesWithPose = stillFrames.size,
+            timeline = stillFrames,
+            durationMs = 2_000L
+        )
+
+        Sport.entries.forEach { sport ->
+            assertTrue(HighlightExtractor().extract(result, sport).isEmpty())
+        }
+    }
+
+    @Test
     fun savedSessionRecreatesTheFullHistoricalReport() {
         val finding = Finding(FindingType.GOOD, "Balance", "Stable through the finish.")
         val entry = SessionEntry(
@@ -91,6 +131,41 @@ class SportProgressTest {
             durationMs = frames.last().timestampMs
         )
     }
+
+    private fun clearActionResult(): AnalysisResult {
+        val frames = (0..20).map { index ->
+            val phase = when (index) {
+                in 0..9 -> 0f
+                10 -> 0.45f
+                else -> 1f
+            }
+            FramePose(
+                timestampMs = index * 200L,
+                landmarks = actionLandmarks(phase)
+            )
+        }
+        return AnalysisResult(
+            framesSampled = frames.size,
+            framesWithPose = frames.size,
+            timeline = frames,
+            durationMs = 4_000L
+        )
+    }
+
+    private fun actionLandmarks(phase: Float): List<LandmarkPoint> = listOf(
+        point(11, 110f, 120f),
+        point(12, 210f, 120f + phase * 22f),
+        point(13, 95f + phase * 35f, 175f - phase * 25f),
+        point(14, 225f + phase * 55f, 170f - phase * 40f),
+        point(15, 80f + phase * 130f, 225f - phase * 90f),
+        point(16, 240f + phase * 155f, 220f - phase * 130f),
+        point(23, 125f, 250f + phase * 18f),
+        point(24, 195f, 250f - phase * 18f),
+        point(25, 120f, 340f - phase * 35f),
+        point(26, 200f, 340f - phase * 40f),
+        point(27, 105f, 430f),
+        point(28, 215f, 430f)
+    )
 
     private fun point(type: Int, x: Float, y: Float) = LandmarkPoint(
         type = type,
