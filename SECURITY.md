@@ -27,3 +27,11 @@ Do not include real athlete videos, API keys, access tokens, or personal data in
 
 This is an active prototype. Security fixes are applied to the latest `main` branch only.
 
+## Official APK signing
+
+GitHub release APKs from version 2.0 onward are signed with the persistent SportsAI release certificate. Verify its SHA-256 certificate fingerprint before sideloading from anywhere other than this repository:
+
+`97:7C:68:3B:51:AE:C2:4F:AE:E7:1B:E3:D2:6F:DE:13:B1:9A:E6:C7:09:9F:7C:EF:41:38:F6:99:17:36:E8:D9`
+
+The private signing keystore and password are not stored in GitHub.
+

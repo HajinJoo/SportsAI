@@ -20,6 +20,7 @@ captures/
 *.p12
 *.pem
 *.der
+signing/
 
 # Environment and secrets
 .env

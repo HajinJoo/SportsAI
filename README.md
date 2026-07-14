@@ -6,6 +6,12 @@ SportsAI is an Android coaching app that turns sports clips into practical techn
 
 > **Upgrading from 1.3 or earlier:** those local editions supported a build-time key. Do not distribute an older APK that was built with a personal credential; revoke that credential in Google AI Studio, then use the keyless 2.0 build.
 
+## Download
+
+The latest installable Android release is available on the [SportsAI GitHub Releases page](https://github.com/HajinJoo/SportsAI/releases/latest). Download `SportsAI-v2.0.apk`. Android 10 / API 29 or newer is required.
+
+Official v2.0 APK SHA-256: `8A0125A16F63EDA4889C5D00E8AF2D4923CAEF58BFC79C43063CE4F4BEF16D60`
+
 ## Final experience
 
 <p align="center">

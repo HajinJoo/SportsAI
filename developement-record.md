@@ -145,3 +145,31 @@ Repository: `https://github.com/HajinJoo/SportsAI`
 - PC APK: `F:\SportsAI\SportsAI-public-v2.0-debug.apk` (132,182,039 bytes).
 - Phone APK: `/sdcard/Download/SportsAI-public-v2.0-debug.apk` (132,182,039 bytes).
 - PC and phone SHA-256: `FBFC9B2EB1950B29CAE93416DF71031C9F1C2B8066DB0E3C604DEE72501DE177`.
+
+## 2026-07-14 — GitHub version 2.0 signed release
+
+### Release signing
+
+- Created the persistent `sportsai-release` RSA-4096 signing identity, valid until November 29, 2053.
+- Signing-certificate SHA-256: `97:7C:68:3B:51:AE:C2:4F:AE:E7:1B:E3:D2:6F:DE:13:B1:9A:E6:C7:09:9F:7C:EF:41:38:F6:99:17:36:E8:D9`.
+- Keystore: `F:\SportsAI\signing\sportsai-release.jks` (local only and excluded from Git).
+- Password recovery: `F:\SportsAI\signing\sportsai-release-password.dpapi` (Windows DPAPI-protected, local only, and excluded from Git).
+- The signing password was never printed, committed, added to release assets, or sent to GitHub.
+
+### Production verification
+
+- Clean unit-test, release-lint, and release-assembly gate: passed with 0 lint errors.
+- Release APK zip-alignment: passed.
+- APK Signature Scheme v3 verification: passed.
+- Manifest verification confirmed version 2.0 (`versionCode` 5), API 29 minimum, API 36 target, and no debuggable marker.
+- Binary credential scan confirmed the machine-local Gemini credential and legacy key transport markers are absent.
+- Release certificate prevents accidental replacement by an APK signed with a disposable debug key.
+- Replaced the empty debug test installation on Samsung SM-S721W with the exact release APK and confirmed a successful cold launch in offline mode.
+
+### GitHub release delivery
+
+- Release: `https://github.com/HajinJoo/SportsAI/releases/tag/v2.0`
+- APK asset: `SportsAI-v2.0.apk` (121,936,514 bytes).
+- PC APK: `F:\SportsAI\SportsAI-v2.0.apk`.
+- Phone APK: `/sdcard/Download/SportsAI-v2.0.apk`.
+- PC and phone APK SHA-256: `8A0125A16F63EDA4889C5D00E8AF2D4923CAEF58BFC79C43063CE4F4BEF16D60`.
