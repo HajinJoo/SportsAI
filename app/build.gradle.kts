@@ -23,8 +23,8 @@ android {
         applicationId = "com.example.sportsai"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -66,6 +66,8 @@ dependencies {
     implementation(libs.mlkit.pose.detection.accurate)
     implementation(libs.coil.compose)
     implementation(libs.androidx.media3.transformer)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

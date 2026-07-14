@@ -74,3 +74,31 @@ Repository: `https://github.com/HajinJoo/SportsAI`
 - Phone APK: `/sdcard/Download/SportsAI-v1.2-debug.apk` (SHA-256 verified against the PC copy)
 - Installed package: `com.example.sportsai`, version 1.2 (`versionCode` 3)
 - SHA-256: `459D847CF4EDFA24906973645CA91566754F81BAC6EFAC96E83BED9B80213D88`
+
+## 2026-07-14 — Version 1.3 first-open video fix
+
+### Delivered
+
+- Replaced the highlight dialog's platform `VideoView` with Media3 ExoPlayer and `PlayerView`.
+- Uses a `TextureView` so video rendering is attached reliably inside the Compose dialog.
+- Registers playback state and error listeners before preparing the media.
+- Starts playback immediately when the dialog is already in the foreground, pauses on app background, resumes on return, and releases the decoder when the dialog closes.
+- Uses exact seeking and a clipped media item for the selected highlight range.
+- Keeps automatic fallback from the original picker URI to the private generated MP4.
+- Added visible loading and playback-failure states instead of leaving an unexplained black rectangle.
+- Bumped the Android app to version 1.3 (`versionCode` 4).
+
+### Real-device verification
+
+- Installed the debug build on Samsung SM-S721W / Android API 36 without clearing saved data.
+- Opened the saved batting result through Timeline and tapped `Best swing · contact` once.
+- The first captured screen already contained a decoded video frame; the app was not backgrounded or resumed.
+- A second capture contained a later frame, confirming active playback rather than a static thumbnail.
+- Unit tests, Android lint, APK assembly, and connected-device instrumentation: passed.
+
+### APK delivery
+
+- PC APK: `F:\SportsAI\SportsAI-v1.3-debug.apk` (132,067,107 bytes)
+- Phone APK: `/sdcard/Download/SportsAI-v1.3-debug.apk`
+- Installed package: `com.example.sportsai`, version 1.3 (`versionCode` 4)
+- PC and phone SHA-256: `136B714E25619711F72932FEF02BA66A9C179D850A3E72D484BF7BC129C53296`

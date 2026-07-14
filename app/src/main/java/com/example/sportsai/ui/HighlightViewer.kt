@@ -4,8 +4,7 @@ import android.graphics.Bitmap
 import android.media.ThumbnailUtils
 import android.net.Uri
 import android.util.Size
-import android.widget.MediaController
-import android.widget.VideoView
+import android.view.LayoutInflater
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -49,12 +49,24 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.ui.PlayerView
+import com.example.sportsai.R
 import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.HighlightClip
 import com.example.sportsai.ui.theme.EnergyOrange
@@ -62,7 +74,6 @@ import com.example.sportsai.ui.theme.ScoreHigh
 import com.example.sportsai.ui.theme.ScoreLow
 import com.example.sportsai.ui.theme.SkyCyan
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -446,6 +457,7 @@ private fun BoundarySlider(
 }
 
 @Composable
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 private fun HighlightVideoPlayer(
     uriString: String,
     startMs: Long,
@@ -454,71 +466,122 @@ private fun HighlightVideoPlayer(
     fallbackEndMs: Long = 0L,
     modifier: Modifier = Modifier
 ) {
-    var player by remember { mutableStateOf<VideoView?>(null) }
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var useFallback by remember(uriString, fallbackUriString) { mutableStateOf(false) }
     var playbackFailed by remember(uriString, fallbackUriString) { mutableStateOf(false) }
+    var isLoading by remember(uriString, fallbackUriString) { mutableStateOf(true) }
     val activeUri = if (useFallback) fallbackUriString else uriString
     val activeStart = if (useFallback) 0L else startMs
     val activeEnd = if (useFallback) fallbackEndMs else endMs
+    val player = remember(context, lifecycleOwner) {
+        ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ONE
+            setSeekParameters(SeekParameters.EXACT)
+        }
+    }
+
+    DisposableEffect(player, lifecycleOwner) {
+        val lifecycle = lifecycleOwner.lifecycle
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> player.play()
+                Lifecycle.Event.ON_STOP -> player.pause()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            player.release()
+        }
+    }
+
+    DisposableEffect(player, useFallback, fallbackUriString) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> isLoading = true
+                    Player.STATE_READY, Player.STATE_ENDED -> {
+                        isLoading = false
+                        playbackFailed = false
+                    }
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isLoading = false
+                if (!useFallback && fallbackUriString.isNotBlank()) {
+                    useFallback = true
+                } else {
+                    playbackFailed = true
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    LaunchedEffect(player, activeUri, activeStart, activeEnd) {
+        if (activeUri.isBlank()) {
+            isLoading = false
+            playbackFailed = true
+            return@LaunchedEffect
+        }
+        val uri = if (activeUri.contains("://")) Uri.parse(activeUri)
+        else Uri.fromFile(File(activeUri))
+        val safeStart = activeStart.coerceAtLeast(0L)
+        val safeEnd = activeEnd.coerceAtLeast(safeStart + MIN_CLIP_MS.toLong())
+        val mediaItem = MediaItem.Builder()
+            .setUri(uri)
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(safeStart)
+                    .setEndPositionMs(safeEnd)
+                    .build()
+            )
+            .build()
+        playbackFailed = false
+        isLoading = true
+        player.setMediaItem(mediaItem)
+        player.prepare()
+        player.playWhenReady = lifecycleOwner.lifecycle.currentState
+            .isAtLeast(Lifecycle.State.STARTED)
+    }
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                VideoView(context).apply {
-                    val controls = MediaController(context)
-                    controls.setAnchorView(this)
-                    setMediaController(controls)
-                    player = this
+            factory = { viewContext ->
+                (LayoutInflater.from(viewContext).inflate(
+                    R.layout.highlight_player_view,
+                    null,
+                    false
+                ) as PlayerView).apply {
+                    this.player = player
                 }
             },
-            update = { view ->
-                val playbackKey = "$activeUri:$activeStart:$activeEnd"
-                if (activeUri.isNotBlank() && view.tag != playbackKey) {
-                    view.tag = playbackKey
-                    view.setOnErrorListener { _, _, _ ->
-                        if (!useFallback && fallbackUriString.isNotBlank()) {
-                            useFallback = true
-                        } else {
-                            playbackFailed = true
-                        }
-                        true
-                    }
-                    val uri = if (activeUri.contains("://")) Uri.parse(activeUri)
-                    else Uri.fromFile(File(activeUri))
-                    view.setVideoURI(uri)
-                    view.setOnPreparedListener {
-                        playbackFailed = false
-                        view.seekTo(activeStart.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
-                        view.start()
-                    }
-                }
-            }
+            update = { view -> view.player = player }
         )
-        if (playbackFailed) {
+        if (isLoading && !playbackFailed) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(34.dp))
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Loading highlight…",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        } else if (playbackFailed) {
             Text(
-                "Video preview unavailable",
+                "Video preview unavailable. Try reopening this result.",
                 color = Color.White,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(20.dp)
             )
         }
-    }
-
-    LaunchedEffect(player, activeUri, activeStart, activeEnd) {
-        val view = player ?: return@LaunchedEffect
-        while (true) {
-            delay(120)
-            val actualEnd = if (view.duration > 0) minOf(activeEnd, view.duration.toLong()) else activeEnd
-            if (view.currentPosition.toLong() >= actualEnd - 40L) {
-                view.seekTo(activeStart.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
-                view.start()
-            }
-        }
-    }
-    DisposableEffect(player) {
-        onDispose { runCatching { player?.stopPlayback() } }
     }
 }
 

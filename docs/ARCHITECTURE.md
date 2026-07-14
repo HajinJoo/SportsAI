@@ -30,6 +30,7 @@ The ViewModel is scoped above bottom navigation, so changing tabs does not cance
 - `HighlightExtractor`: pose-timeline ranking for release, contact, form, and peak-action moments
 - `HighlightExtractor`: normalized, smoothed sport-specific action scoring for pitch release, swing contact, and shot release
 - `VideoClipExporter`: local Media3 Transformer clipping for precise MP4 cutting and re-cutting
+- `HighlightVideoPlayer`: lifecycle-aware Media3 ExoPlayer playback on a dialog-safe `TextureView`, with exact seeking and source-to-private-file fallback
 - `HistoryRepository`: app-private JSON timeline persistence
 
 ### Models

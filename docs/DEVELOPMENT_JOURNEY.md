@@ -192,6 +192,10 @@ Pose timing now identifies peak action, best form, and sport-specific release/co
 
 Real-device testing exposed two weaknesses in the first highlight pass: a normal tap used the generated file while the editor used the more reliable source URI, and keyframe-based remuxing could include video from well before the selected action. Playback now opens the exact source range immediately and falls back to the private clip only when needed. Media3 Transformer creates precise replacement clips, while a smoothed, body-normalized selector chooses one complete sport-specific action using release-arm speed and extension for pitching, hand speed and torso rotation for batting, or upward release, elbow extension, and leg drive for basketball shooting. Static poses and isolated one-frame tracking jumps are rejected.
 
+## 19. Removing the first-open black video
+
+The platform `VideoView` could prepare a fast local clip before its callback and dialog surface were ready. The result was a black player until the app was backgrounded and resumed. Highlight playback now uses Media3 ExoPlayer attached to a `TextureView`, prepares only while the lifecycle is started, pauses in the background, releases with the dialog, and displays an explicit loading or failure state. Exact seeking and clipping are handled by the player, and a real Samsung test confirmed that a saved highlight rendered and advanced frames on its first open without an app restart.
+
 ## Final architecture snapshot
 
 ```text
