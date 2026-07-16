@@ -173,3 +173,36 @@ Repository: `https://github.com/HajinJoo/SportsAI`
 - PC APK: `F:\SportsAI\SportsAI-v2.0.apk`.
 - Phone APK: `/sdcard/Download/SportsAI-v2.0.apk`.
 - PC and phone APK SHA-256: `8A0125A16F63EDA4889C5D00E8AF2D4923CAEF58BFC79C43063CE4F4BEF16D60`.
+
+## 2026-07-15 — Version 2.1 evidence-grounded Gemini vision
+
+### Accuracy changes
+
+- Removed the previous instruction to infer through blur, cropping, or incomplete footage and never admit insufficient visibility.
+- Runs sport-aware action detection before Gemini coaching so the request focuses on the actual swing, pitch, or shot rather than idle frames across the full recording.
+- Reopens up to eight frames from that action at a maximum 1280-pixel dimension; the 480-pixel replay frames remain only a safe extraction fallback.
+- Precedes each image with its exact frame label, timestamp, temporal region, resolution, detected athlete box, and normalized key-joint tracker context.
+- Added an evidence-only system instruction plus sport-specific batting, pitching, and shooting checklists.
+- Batting instructions require visible proof of the batter and bat, call an unseen-ball moment a contact-zone frame rather than contact, and distinguish visible movement potential from measured bat speed or ball tracking.
+- Gemini must report athlete visibility, visual confidence, inspected frame labels, visible body/equipment, and camera limitations before scoring.
+- The app accepts Gemini coaching only when the athlete is reported visible with at least 55% confidence across three valid submitted frame labels.
+- Strengths and issues without a valid submitted-frame citation are discarded.
+- Insufficient or unsupported visual evidence produces an explicit camera-view note and on-device pose report instead of guessed Gemini feedback.
+- Bumped the Android app to version 2.1 (`versionCode` 6).
+
+### Regression and production verification
+
+- Added tests for batting evidence constraints, unsupported-visibility rejection, accepted grounded sequences, action-window selection, and full-timeline fallback.
+- Clean `testDebugUnitTest lintRelease assembleRelease assembleDebugAndroidTest` gate: passed.
+- Connected Samsung SM-S721W instrumentation: 2/2 tests passed using the production signing identity.
+- Release APK zip-alignment and APK Signature Scheme v3 verification: passed.
+- Manifest verified version 2.1 (`versionCode` 6), API 29 minimum, and API 36 target.
+- Credential scan found no bundled Gemini key, legacy `GEMINI_API_KEY`, or key-in-query transport.
+- Installed as an in-place update on Samsung SM-S721W, preserving the configured Gemini state, and cold-launched successfully.
+
+### APK delivery
+
+- PC APK: `F:\SportsAI\SportsAI-v2.1.apk` (121,952,898 bytes).
+- Phone APK: `/sdcard/Download/SportsAI-v2.1.apk` (121,952,898 bytes).
+- PC and phone SHA-256: `43468AE1B78EE114D35300AE35CEDB2D23A74614F300DB4AFDDC189FEE7128E9`.
+- Signing-certificate SHA-256: `97:7C:68:3B:51:AE:C2:4F:AE:E7:1B:E3:D2:6F:DE:13:B1:9A:E6:C7:09:9F:7C:EF:41:38:F6:99:17:36:E8:D9`.

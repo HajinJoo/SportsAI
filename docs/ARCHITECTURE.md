@@ -27,7 +27,8 @@ The ViewModel is scoped above bottom navigation, so changing tabs does not cance
 
 - `PoseAnalyzer`: frame extraction and ML Kit pose detection
 - `TechniqueAnalyzer`: explainable sport-specific biomechanics rules
-- `GeminiCoach`: optional Gemini 3.5 Flash multimodal analysis using the current device user's key
+- `CoachingFrameExtractor`: high-resolution frame extraction focused on the detected action window
+- `GeminiCoach`: optional Gemini 3.5 Flash multimodal analysis with visibility validation and frame-cited evidence
 - `GeminiApiKeyStore`: AES-GCM encryption backed by a non-exportable Android Keystore key
 - `HighlightExtractor`: pose-timeline ranking for release, contact, form, and peak-action moments
 - `HighlightExtractor`: normalized, smoothed sport-specific action scoring for pitch release, swing contact, and shot release
@@ -45,17 +46,18 @@ Models represent landmarks, frame poses, animation frames, sports, findings, rep
 2. `PoseAnalyzer` samples approximately five frames per second.
 3. ML Kit detects landmarks on each sampled bitmap.
 4. The analyzer stores a timeline, best key frame, and downscaled replay frames.
-5. If the device user has saved a Gemini key and pose frames are available, `GeminiCoach` requests structured coaching using the `x-goog-api-key` header.
-6. If that request cannot run, `TechniqueAnalyzer` generates a local report.
-7. `HighlightExtractor` selects the most useful movement moments.
-8. `VideoClipExporter` cuts those ranges into separate app-private MP4 files.
-9. `AnalysisViewModel` exposes the report, replay, metric filters, and highlights to Compose.
-10. After the user chooses a filming date, the full report and highlight references are stored locally.
-11. Tapping a timeline date reconstructs the historical report. Editing a highlight re-cuts the original picker URI when that persisted permission is still available.
+5. `HighlightExtractor` first identifies the strongest complete sport-specific action.
+6. If the device user has saved a Gemini key, `CoachingFrameExtractor` reopens up to eight 1280-pixel frames across that action and pairs each with its pose timestamp.
+7. `GeminiCoach` labels each frame, sends normalized key-joint context, and requests structured coaching using the `x-goog-api-key` header. Results must pass the athlete-visibility and frame-citation gate or the app uses honest offline coaching.
+8. If that request cannot run or fails its evidence gate, `TechniqueAnalyzer` generates a local report.
+9. `VideoClipExporter` cuts the detected action range into a separate app-private MP4 file.
+10. `AnalysisViewModel` exposes the report, replay, metric filters, and highlight to Compose.
+11. After the user chooses a filming date, the full report and highlight reference are stored locally.
+12. Tapping a timeline date reconstructs the historical report. Editing a highlight re-cuts the original picker URI when that persisted permission is still available.
 
 ## Network boundary
 
-The app does not upload the original video. When Gemini is configured, up to six selected frames are JPEG-compressed and included in a Gemini API request. See [Privacy Notes](PRIVACY.md).
+The app does not upload the original video. When Gemini is configured, up to eight action-focused frames are JPEG-compressed and included in a Gemini API request. See [Privacy Notes](PRIVACY.md).
 
 ## Bring-your-own-key operation
 

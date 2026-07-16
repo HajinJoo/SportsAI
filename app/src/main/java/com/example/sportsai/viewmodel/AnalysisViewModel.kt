@@ -7,17 +7,21 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sportsai.data.GeminiCoach
 import com.example.sportsai.data.GeminiApiKeyStore
+import com.example.sportsai.data.CoachingFrameExtractor
 import com.example.sportsai.data.HighlightExtractor
 import com.example.sportsai.data.HistoryRepository
 import com.example.sportsai.data.PoseAnalyzer
 import com.example.sportsai.data.TechniqueAnalyzer
 import com.example.sportsai.data.VideoClipExporter
+import com.example.sportsai.data.InsufficientVisualEvidenceException
 import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.FramePose
 import com.example.sportsai.model.HighlightClip
 import com.example.sportsai.model.SessionEntry
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
+import com.example.sportsai.model.Finding
+import com.example.sportsai.model.FindingType
 import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +83,7 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
     private val geminiApiKeyStore = GeminiApiKeyStore(app.applicationContext)
     private val geminiCoach = GeminiCoach(geminiApiKeyStore::read)
     private val highlightExtractor = HighlightExtractor()
+    private val coachingFrameExtractor = CoachingFrameExtractor(app.applicationContext)
     private val videoClipExporter = VideoClipExporter(app.applicationContext)
     private val history = HistoryRepository(app.applicationContext)
 
@@ -230,16 +235,33 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                 _uiState.value = AnalysisUiState.Analyzing(
                     1f, AnalysisUiState.Analyzing.Stage.COACHING
                 )
-                // Prefer AI (Gemini) coaching from the actual frames; fall back to the
-                // on-device rule engine if the key is missing or the request fails.
+                // Find the action first, then re-open that exact range at coaching resolution.
+                // The animation frames are intentionally small and are only a fallback.
+                val proposedHighlights = highlightExtractor.extract(result, sport)
+                var coachingFrames = emptyList<AnimationFrame>()
                 val report = try {
                     if (geminiCoach.isConfigured && result.animationFrames.isNotEmpty()) {
-                        geminiCoach.coach(result.animationFrames, result, sport)
+                        coachingFrames = coachingFrameExtractor.extract(
+                            videoUri = videoUri,
+                            result = result,
+                            actionWindow = proposedHighlights.firstOrNull()
+                        )
+                        geminiCoach.coach(
+                            frames = coachingFrames.ifEmpty { result.animationFrames },
+                            result = result,
+                            sport = sport
+                        )
                     } else {
                         techniqueAnalyzer.analyze(result, sport)
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
+                } catch (e: InsufficientVisualEvidenceException) {
+                    visualEvidenceFallback(
+                        techniqueAnalyzer.analyze(result, sport),
+                        e.visibilitySummary,
+                        e.limitations
+                    )
                 } catch (e: Exception) {
                     if (_geminiSettings.value.configured && !_geminiSettings.value.isTesting) {
                         _geminiSettings.value = _geminiSettings.value.copy(
@@ -248,10 +270,12 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                     techniqueAnalyzer.analyze(result, sport)
+                } finally {
+                    coachingFrames.forEach { frame -> frame.bitmap.recycle() }
                 }
 
                 // Extract highlight clips from the pose timeline.
-                val highlights = highlightExtractor.extract(result, sport).map { clip ->
+                val highlights = proposedHighlights.map { clip ->
                     runCatching {
                         videoClipExporter.export(videoUri, clip, analysisId)
                     }.getOrDefault(clip)
@@ -421,6 +445,24 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
             isLoading = false,
             configured = maskedKey != null,
             maskedKey = maskedKey
+        )
+    }
+
+    private fun visualEvidenceFallback(
+        offline: TechniqueReport,
+        visibilitySummary: String,
+        limitations: List<String>
+    ): TechniqueReport {
+        val cameraMessage = buildString {
+            append(visibilitySummary.ifBlank { "Gemini could not clearly verify the athlete in the action frames." })
+            if (limitations.isNotEmpty()) append(" ").append(limitations.joinToString(" "))
+        }
+        return offline.copy(
+            summary = "The camera view was not clear enough for verified Gemini coaching, so these scores use on-device pose tracking.",
+            findings = listOf(Finding(FindingType.TIP, "Camera view", cameraMessage)) + offline.findings,
+            aiOverview = "Gemini could not clearly verify the athlete throughout the submitted action frames, so SportsAI did not let it guess. " +
+                "The scores below use on-device pose tracking instead. ${offline.summary} " +
+                "For verified visual coaching, record the full athlete and equipment from setup through follow-through in bright, steady video."
         )
     }
 

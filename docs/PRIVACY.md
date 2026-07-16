@@ -19,7 +19,7 @@ SportsAI analyzes user-selected sports videos. Developers and testers should und
 When the device owner saves their own Gemini API key in Settings and analyzed frames are available, SportsAI sends:
 
 - The user-provided API key in Google's `x-goog-api-key` request header
-- Up to six selected JPEG-compressed frames
+- Up to eight JPEG-compressed frames focused on the detected sports action
 - The selected sport name
 - A coaching prompt requesting score, summary, strengths, issues, and tips
 

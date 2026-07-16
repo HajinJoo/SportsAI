@@ -8,9 +8,9 @@ SportsAI is an Android coaching app that turns sports clips into practical techn
 
 ## Download
 
-The latest installable Android release is available on the [SportsAI GitHub Releases page](https://github.com/HajinJoo/SportsAI/releases/latest). Download `SportsAI-v2.0.apk`. Android 10 / API 29 or newer is required.
+The latest installable Android release is available on the [SportsAI GitHub Releases page](https://github.com/HajinJoo/SportsAI/releases/latest). Download `SportsAI-v2.1.apk`. Android 10 / API 29 or newer is required.
 
-Official v2.0 APK SHA-256: `8A0125A16F63EDA4889C5D00E8AF2D4923CAEF58BFC79C43063CE4F4BEF16D60`
+Official v2.1 APK SHA-256: `43468AE1B78EE114D35300AE35CEDB2D23A74614F300DB4AFDDC189FEE7128E9`
 
 ## Final experience
 
@@ -26,7 +26,7 @@ The project began as a single simple upload screen and evolved into a four-desti
 
 - **Three supported movements:** baseball pitching, baseball batting, and basketball shooting
 - **On-device pose tracking:** samples video frames and detects body landmarks with ML Kit
-- **Optional Gemini coaching:** sends a small set of selected frames for multimodal technique feedback
+- **Evidence-grounded Gemini coaching:** re-extracts up to eight clear frames from the detected action, labels their times and pose evidence, and rejects feedback when the athlete is not visibly verifiable
 - **Bring-your-own Gemini key:** every user can securely add, test, replace, or remove their own API key in Settings; no developer key ships in the app
 - **Offline fallback:** an explainable biomechanics rules engine produces feedback if Gemini is unavailable
 - **Skeleton replay:** overlays tracked joints and bones on analyzed motion
@@ -112,7 +112,7 @@ On macOS or Linux, use `./gradlew` and `/` path separators.
 
 ## Public, keyless build
 
-SportsAI 2.0 has no build-time Gemini credential path. Every APK is built keyless and uses the local pose pipeline plus sport-specific biomechanics rules until that device's user adds their own key in Settings. Public CI verifies the same no-secret build.
+SportsAI 2.0 and newer have no build-time Gemini credential path. Every APK is built keyless and uses the local pose pipeline plus sport-specific biomechanics rules until that device's user adds their own key in Settings. Public CI verifies the same no-secret build.
 
 ## API-key storage and warning
 
@@ -148,7 +148,7 @@ app/src/main/java/com/example/sportsai/
 ## Documentation
 
 - [Development journey](docs/DEVELOPMENT_JOURNEY.md)
-- [Development record through version 2.0](developement-record.md)
+- [Development record through version 2.1](developement-record.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy notes](docs/PRIVACY.md)
 - [Security policy](SECURITY.md)
