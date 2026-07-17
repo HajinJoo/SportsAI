@@ -30,13 +30,22 @@ class GeminiCoachTest {
 
     @Test
     fun battingPromptRequiresVisibleBatterAndFrameEvidence() {
-        val prompt = GeminiCoach { "test" }.promptFor(Sport.BASEBALL_BAT)
+        val coach = GeminiCoach { "test" }
+        val prompt = coach.promptFor(Sport.BASEBALL_BAT)
+        val system = coach.systemInstruction()
 
         assertTrue(prompt.contains("body-box target is visibly the batter"))
         assertTrue(prompt.contains("do not choose the largest bystander"))
         assertTrue(prompt.contains("Every strength and issue must"))
         assertTrue(prompt.contains("contact-zone frame"))
         assertTrue(prompt.contains("set athleteVisible=false"))
+        assertTrue(prompt.contains("ON_DEVICE_ANALYSIS_JSON"))
+        assertTrue(system.contains("authoritative for numeric scores"))
+        assertTrue(system.contains("Do not recalculate, replace, add, or remove"))
+        assertTrue(system.contains("Do not apply side-view rules"))
+        assertTrue(prompt.contains("Respect the authoritative cameraView routing"))
+        assertTrue(prompt.contains("Object boxes do not establish bat-head angle"))
+        assertFalse(prompt.contains("metricScores: a JSON object"))
         assertFalse(prompt.contains("best-effort", ignoreCase = true))
         assertFalse(prompt.contains("infer as much", ignoreCase = true))
     }

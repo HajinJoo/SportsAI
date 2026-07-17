@@ -218,15 +218,35 @@ Version 2.2 introduced an offline batting-specific path:
 
 Once Batter Lock succeeds, the selected track supplies the same offline coaching, sport metrics, skeleton replay, local highlight selector, editor, and timeline features that previously depended on a single detected pose. Sensitive key, history, and generated-highlight paths are excluded from Android backup and device transfer. Gemini remains optional. This is still pose analysis rather than equipment tracking: it does not detect the bat or ball, prove contact or gaze, or measure radar speed, ball flight, launch angle, or physical distance.
 
+## 22. Routing swing mechanics by camera view
+
+Version 2.3 turned the accepted batter timeline into a structured, view-aware coaching pipeline. A separate lightweight MediaPipe object task records confidence-gated bat and sports-ball boxes, while pose landmarks remain the sole source for body mechanics. The two evidence streams are never substituted for one another.
+
+The local analyzer now:
+
+- Uses the median projected shoulder and hip width, normalized by torso length across multiple reliable frames, to classify the clip as side, rear, or unconfirmed.
+- Applies projected front/trail-knee and hand-load rules only to confirmed side views.
+- Applies spine/head stability and hip-to-shoulder rotation timing only to confirmed rear views.
+- Withholds view-specific labels when the geometry falls in the ambiguous overlap instead of forcing a classification.
+- Segments stance, stride, impact zone, and follow-through around a coordinated hand-motion peak. The impact zone remains a motion window, not proof of contact.
+- Serializes phases, camera-view evidence, measurements, issue codes, and equipment observations into a versioned local JSON contract.
+- Lets Gemini turn that immutable JSON into a professional narrative without adding, removing, or changing local measurements and issue codes.
+
+The report exposes the inferred view, confidence, usable frame count, and geometric evidence so a user can see which rule set ran. Existing schema-v1 sessions still open and receive an unconfirmed camera-view default. The analysis profile changed to `offline-batter-lock-v3`, preventing incompatible v2 and v3 progress comparisons.
+
+This release deliberately does not infer bat-head angle, sweet-spot contact, launch angle, trajectory, gaze, radar speed, or real-world distance. Object boxes and 2D projected joints do not support those claims. A real nine-second game-angle clip passed the complete Batter Lock, object detection, view routing, phase segmentation, routed-measurement, and schema-v2 JSON acceptance path on a Samsung SM-S721W.
+
 ## Final architecture snapshot
 
 ```text
 Photo Picker
     -> PoseAnalyzer
-       -> batting: MediaPipe multi-pose -> BatterPoseSelector -> accept or abstain
+         -> batting: MediaPipe multi-pose + bat/ball object observations
+             -> BatterPoseSelector -> accept or abstain
        -> pitching/shooting: ML Kit single pose
-    -> TechniqueAnalyzer (local, accepted athlete track only)
-    -> GeminiCoach (optional selected-frame analysis)
+     -> SwingMechanicsAnalyzer (camera view -> phases -> routed measurements/issues)
+     -> TechniqueAnalyzer (authoritative local report + schema-v2 JSON)
+     -> GeminiCoach (optional JSON-grounded narrative + selected frames)
     -> HighlightExtractor (local sport-aware moment selection)
     -> VideoClipExporter (private MP4 cut/edit)
     -> AnalysisViewModel
@@ -243,7 +263,7 @@ Photo Picker
 - Add camera capture and clip trimming
 - Add more movements only with dedicated mechanics and test data
 - Validate Batter Lock across a larger, consented set of camera angles, uniforms, lighting, body types, and levels of play
-- Add dedicated bat/ball detection only if future features need equipment, contact, or flight measurements
+- Train and validate dedicated bat-head and ball tracking only before attempting contact or flight measurements
 - Complete accessibility review with TalkBack and large font settings
 
 SportsAI should continue to present itself as an educational coaching aid—not a medical assessment or a substitute for in-person coaching.

@@ -36,8 +36,9 @@ sealed interface AnalysisUiState {
     data object Idle : AnalysisUiState
     data class Analyzing(val progress: Float, val stage: Stage = Stage.SCANNING) : AnalysisUiState {
         enum class Stage(val label: String) {
-            SCANNING("Tracking your body frame by frame…"),
-            COACHING("Building your coaching report…")
+            SCANNING("Tracking body, bat, and ball frame by frame…"),
+            MECHANICS("Segmenting phases and evaluating mechanics…"),
+            COACHING("Writing your coaching report…")
         }
     }
     data class Done(
@@ -236,7 +237,7 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                     _uiState.value = AnalysisUiState.Analyzing(progress)
                 }
                 _uiState.value = AnalysisUiState.Analyzing(
-                    1f, AnalysisUiState.Analyzing.Stage.COACHING
+                    1f, AnalysisUiState.Analyzing.Stage.MECHANICS
                 )
                 // Find the action first, then re-open that exact range at coaching resolution.
                 // The animation frames are intentionally small and are only a fallback.
@@ -248,10 +249,14 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                     highlightExtractor.extract(result, sport)
                 }
                 var coachingFrames = emptyList<AnimationFrame>()
+                val localReport = techniqueAnalyzer.analyze(result, sport)
+                _uiState.value = AnalysisUiState.Analyzing(
+                    1f, AnalysisUiState.Analyzing.Stage.COACHING
+                )
                 val report = if (batterLockRejected) {
                     // Safety contract: an uncertain candidate timeline never reaches Gemini,
                     // scoring, highlight export, or history persistence.
-                    techniqueAnalyzer.analyze(result, sport)
+                    localReport
                 } else try {
                     if (geminiCoach.isConfigured && result.animationFrames.isNotEmpty()) {
                         coachingFrames = coachingFrameExtractor.extract(
@@ -261,17 +266,17 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                         )
                         geminiCoach.coach(
                             frames = coachingFrames.ifEmpty { result.animationFrames },
-                            result = result,
-                            sport = sport
+                            sport = sport,
+                            localReport = localReport
                         )
                     } else {
-                        techniqueAnalyzer.analyze(result, sport)
+                        localReport
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: InsufficientVisualEvidenceException) {
                     visualEvidenceFallback(
-                        techniqueAnalyzer.analyze(result, sport),
+                        localReport,
                         e.visibilitySummary,
                         e.limitations
                     )
@@ -282,7 +287,7 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                             isError = true
                         )
                     }
-                    techniqueAnalyzer.analyze(result, sport)
+                    localReport
                 } finally {
                     coachingFrames.forEach { frame -> frame.bitmap.recycle() }
                 }
@@ -466,7 +471,8 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
             detectionRate = state.report.detectionRate,
             sourceVideoUri = state.sourceVideoUri,
             videoDurationMs = state.videoDurationMs,
-            analysisProfile = state.report.analysisProfile
+            analysisProfile = state.report.analysisProfile,
+            swingAnalysis = state.report.swingAnalysis
         )
         _timeline.value = history.add(entry)
         return entry

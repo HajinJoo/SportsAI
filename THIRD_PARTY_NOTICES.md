@@ -26,6 +26,20 @@ The production APK includes a readable MediaPipe/model notice and the Apache 2.0
 
 The model estimates 33 body landmarks. SportsAI's separate `BatterPoseSelector` logic associates and ranks temporary tracks; the model itself is not represented as a baseball-role classifier or identity model.
 
+## EfficientDet-Lite0 object detector
+
+- Bundled file: `app/src/main/assets/efficientdet_lite0_int8.tflite`
+- Model: MediaPipe EfficientDet-Lite0, int8, version 1, 320 x 320 input
+- Download source: [Google MediaPipe model storage](https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite)
+- Model documentation: [MediaPipe Object Detector](https://developers.google.com/edge/mediapipe/solutions/vision/object_detector)
+- Training labels: COCO 80-class label map
+- Size: 4,602,795 bytes
+- SHA-256: `0720BF247BD76E6594EA28FA9C6F7C5242BE774818997DBBEFFC4DA460C723BB`
+- License: Apache License 2.0
+- Modifications: none; SportsAI restricts runtime output to `baseball bat` and `sports ball`
+
+Object detection is confidence-gated visual evidence. A missing detection does not prove that the bat or ball is absent, and a detected sports ball does not prove pitch identity, contact, trajectory, or outcome.
+
 ## ML Kit Pose Detection
 
 - Component: `com.google.mlkit:pose-detection-accurate:18.0.0-beta5`

@@ -92,13 +92,18 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.AthleteTrackingInfo
 import com.example.sportsai.model.AthleteTrackingMode
+import com.example.sportsai.model.EquipmentTrackingStatus
 import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.FramePose
 import com.example.sportsai.model.HighlightClip
+import com.example.sportsai.model.MechanicsIssueSeverity
 import com.example.sportsai.model.SessionEntry
 import com.example.sportsai.model.Sport
+import com.example.sportsai.model.SwingAnalysisSummary
+import com.example.sportsai.model.SwingCameraView
 import com.example.sportsai.model.TechniqueReport
+import com.example.sportsai.model.TrackedObjectType
 import com.example.sportsai.model.isPartialMetricScore
 import com.example.sportsai.ui.theme.EnergyOrange
 import com.example.sportsai.ui.theme.GoodGreen
@@ -1078,7 +1083,7 @@ private fun AnalysisExperience(state: AnalysisUiState.Analyzing) {
             contentColor = MaterialTheme.colorScheme.primary
         ) {
             Text(
-                if (scanning) "STAGE 1 OF 2" else "STAGE 2 OF 2",
+                "STAGE ${state.stage.ordinal + 1} OF 3",
                 Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Black,
@@ -1126,7 +1131,11 @@ private fun AnalysisExperience(state: AnalysisUiState.Analyzing) {
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    if (scanning) "${(progress * 100).roundToInt()}%" else "COACH",
+                    when (state.stage) {
+                        AnalysisUiState.Analyzing.Stage.SCANNING -> "${(progress * 100).roundToInt()}%"
+                        AnalysisUiState.Analyzing.Stage.MECHANICS -> "ML"
+                        AnalysisUiState.Analyzing.Stage.COACHING -> "COACH"
+                    },
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Black
                 )
@@ -1136,16 +1145,25 @@ private fun AnalysisExperience(state: AnalysisUiState.Analyzing) {
         AnimatedContent(state.stage, label = "stageLabel") { stage ->
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    if (stage == AnalysisUiState.Analyzing.Stage.SCANNING) "Mapping your movement" else "Building your coaching plan",
+                    when (stage) {
+                        AnalysisUiState.Analyzing.Stage.SCANNING -> "Mapping the athlete and equipment"
+                        AnalysisUiState.Analyzing.Stage.MECHANICS -> "Reading the swing sequence"
+                        AnalysisUiState.Analyzing.Stage.COACHING -> "Building your coaching plan"
+                    },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (stage == AnalysisUiState.Analyzing.Stage.SCANNING)
-                        "Tracking posture, balance and joint positions frame by frame."
-                    else "Comparing key moments and turning them into clear next steps.",
+                    when (stage) {
+                        AnalysisUiState.Analyzing.Stage.SCANNING ->
+                            "Tracking joints with Batter Lock and checking each frame for a visible bat or ball."
+                        AnalysisUiState.Analyzing.Stage.MECHANICS ->
+                            "Segmenting stance, stride, impact zone and follow-through, then applying numeric issue labels."
+                        AnalysisUiState.Analyzing.Stage.COACHING ->
+                            "Turning the on-device analysis JSON into clear next steps without changing its measurements."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -1154,16 +1172,18 @@ private fun AnalysisExperience(state: AnalysisUiState.Analyzing) {
             }
         }
         Spacer(Modifier.height(28.dp))
-        AnalysisSteps(scanning)
+        AnalysisSteps(state.stage)
     }
 }
 
 @Composable
-private fun AnalysisSteps(scanning: Boolean) {
+private fun AnalysisSteps(stage: AnalysisUiState.Analyzing.Stage) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        StepPill("01", "Body tracking", active = true, complete = !scanning, Modifier.weight(1f))
-        Box(Modifier.width(20.dp).height(2.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)))
-        StepPill("02", "Coach review", active = !scanning, complete = false, Modifier.weight(1f))
+        StepPill("01", "Tracking", active = stage == AnalysisUiState.Analyzing.Stage.SCANNING, complete = stage.ordinal > 0, Modifier.weight(1f))
+        Box(Modifier.width(10.dp).height(2.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)))
+        StepPill("02", "Mechanics", active = stage == AnalysisUiState.Analyzing.Stage.MECHANICS, complete = stage.ordinal > 1, Modifier.weight(1f))
+        Box(Modifier.width(10.dp).height(2.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)))
+        StepPill("03", "Coach", active = stage == AnalysisUiState.Analyzing.Stage.COACHING, complete = false, Modifier.weight(1f))
     }
 }
 
@@ -1356,6 +1376,12 @@ private fun ResultsDashboard(
             state.keyFramePose,
             state.athleteTracking
         )
+        state.report.swingAnalysis?.let { analysis ->
+            if (analysis.phases.isNotEmpty() || analysis.equipment.isNotEmpty()) {
+                Spacer(Modifier.height(24.dp))
+                SwingAnalysisSection(analysis)
+            }
+        }
         Spacer(Modifier.height(24.dp))
         HighlightsSection(
             highlights = state.report.highlights,
@@ -1412,6 +1438,12 @@ private fun PastSessionDashboard(
             selectedMetric = selectedMetric,
             onMetricSelected = onMetricSelected
         )
+        state.entry.swingAnalysis?.let { analysis ->
+            if (analysis.phases.isNotEmpty() || analysis.equipment.isNotEmpty()) {
+                Spacer(Modifier.height(24.dp))
+                SwingAnalysisSection(analysis)
+            }
+        }
         Spacer(Modifier.height(24.dp))
         HighlightsSection(
             highlights = state.entry.highlights,
@@ -1601,6 +1633,289 @@ private fun MotionPanel(
 }
 
 @Composable
+private fun SwingAnalysisSection(analysis: SwingAnalysisSummary) {
+    Column {
+        SectionHeading(
+            title = "Local swing model",
+            number = "03",
+            trailing = "JSON V${analysis.schemaVersion} · ON DEVICE"
+        )
+        Spacer(Modifier.height(12.dp))
+        val viewConfirmed = analysis.cameraView.view != SwingCameraView.UNKNOWN
+        val viewAccent = if (viewConfirmed) SkyCyan else MaterialTheme.colorScheme.onSurfaceVariant
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = SmallShape,
+            color = viewAccent.copy(alpha = if (viewConfirmed) 0.10f else 0.06f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, viewAccent.copy(alpha = 0.22f))
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "CAMERA VIEW",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = viewAccent,
+                        fontWeight = FontWeight.Black
+                    )
+                    if (viewConfirmed) {
+                        Text(
+                            "${(analysis.cameraView.confidence * 100).roundToInt()}% · ${analysis.cameraView.usableFrames} frames",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    analysis.cameraView.view.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    analysis.cameraView.evidence,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!viewConfirmed) {
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        "View-specific mechanics were withheld for this clip.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarnAmber,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+        if (analysis.phases.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Movement phases",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                analysis.phases.forEachIndexed { index, phase ->
+                    Surface(
+                        modifier = Modifier.width(154.dp).heightIn(min = 112.dp),
+                        shape = CardShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                        )
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(
+                                "0${index + 1}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Black
+                            )
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                phase.phase.displayName,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "${formatSeconds(phase.startMs)}–${formatSeconds(phase.endMs)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(7.dp))
+                            Text(
+                                "${(phase.confidence * 100).roundToInt()}% confidence",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SkyCyan,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (analysis.equipment.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                analysis.equipment.forEach { equipment ->
+                    val detected = equipment.status == EquipmentTrackingStatus.DETECTED
+                    val accent = if (detected) GoodGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                    Surface(
+                        modifier = Modifier.weight(1f).heightIn(min = 92.dp),
+                        shape = SmallShape,
+                        color = accent.copy(alpha = if (detected) 0.10f else 0.06f),
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ) {
+                        Column(Modifier.padding(13.dp)) {
+                            Text(
+                                if (equipment.type == TrackedObjectType.BAT) "BAT" else "BALL",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = accent,
+                                fontWeight = FontWeight.Black
+                            )
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                equipmentStatusText(equipment.status),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                if (equipment.status == EquipmentTrackingStatus.NOT_RUN) {
+                                    "Detector unavailable"
+                                } else {
+                                    "${equipment.detectedFrames}/${equipment.sampledFrames} frames · peak ${(equipment.maxConfidence * 100).roundToInt()}%"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (analysis.measurements.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text("Measured signals", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Card(
+                shape = CardShape,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                )
+            ) {
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    analysis.measurements.forEachIndexed { index, measurement ->
+                        if (index > 0) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    measurement.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                measurement.phase?.let { phase ->
+                                    Text(
+                                        phase.displayName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                formatMeasurement(measurement.value, measurement.unit),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Black,
+                                textAlign = TextAlign.End
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text("Mechanics labels", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        if (analysis.issues.isEmpty()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = CardShape,
+                color = GoodGreen.copy(alpha = 0.09f),
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
+                Text(
+                    "No threshold-based issue label had enough numeric evidence in this clip.",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        } else {
+            analysis.issues.forEachIndexed { index, issue ->
+                val accent = if (issue.severity == MechanicsIssueSeverity.PRIORITY) ScoreLow else WarnAmber
+                Card(
+                    shape = CardShape,
+                    colors = CardDefaults.cardColors(
+                        containerColor = accent.copy(alpha = 0.09f),
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.24f))
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                issue.code,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = accent,
+                                fontWeight = FontWeight.Black
+                            )
+                            Text(
+                                "${issue.phase.displayName} · ${(issue.confidence * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(issue.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(5.dp))
+                        Text(issue.evidence, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            issue.coachingCue,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = accent,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                if (index != analysis.issues.lastIndex) Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+private fun formatSeconds(timestampMs: Long): String =
+    String.format(Locale.US, "%.2fs", timestampMs / 1_000.0)
+
+private fun formatMeasurement(value: Double, unit: String): String {
+    val numeric = if (unit == "deg") {
+        value.roundToInt().toString()
+    } else {
+        String.format(Locale.US, "%.2f", value)
+    }
+    return "$numeric $unit"
+}
+
+private fun equipmentStatusText(status: EquipmentTrackingStatus): String = when (status) {
+    EquipmentTrackingStatus.DETECTED -> "Detected"
+    EquipmentTrackingStatus.NOT_DETECTED -> "Not detected"
+    EquipmentTrackingStatus.NOT_RUN -> "Not measured"
+}
+
+@Composable
 private fun CoachingReport(report: TechniqueReport) {
     val groups = listOf(
         Triple("What's working", GoodGreen, report.findings.filter { it.type == FindingType.GOOD }),
@@ -1609,7 +1924,7 @@ private fun CoachingReport(report: TechniqueReport) {
     ).filter { it.third.isNotEmpty() }
 
     Column {
-        SectionHeading("Coach's breakdown", "03", "${report.findings.size} INSIGHTS")
+        SectionHeading("Coach's breakdown", "04", "${report.findings.size} INSIGHTS")
         Spacer(Modifier.height(12.dp))
         groups.forEachIndexed { index, (title, color, findings) ->
             InsightGroup(title, color, findings, index + 1)

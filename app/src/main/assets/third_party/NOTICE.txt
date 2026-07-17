@@ -12,6 +12,11 @@ Model card: https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blaze
 SHA-256: 4EAA5EB7A98365221087693FCC286334CF0858E2EB6E15B506AA4A7ECDCEC4AD
 Licensed under the Apache License, Version 2.0.
 
+MediaPipe EfficientDet-Lite0, int8, version 1
+Source: https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite
+SHA-256: 0720BF247BD76E6594EA28FA9C6F7C5242BE774818997DBBEFFC4DA460C723BB
+Licensed under the Apache License, Version 2.0.
+
 The complete Apache License 2.0 text is included in the adjacent
 APACHE-2.0.txt asset. Source-repository notices, including connected-test
 media attribution, are available in THIRD_PARTY_NOTICES.md.

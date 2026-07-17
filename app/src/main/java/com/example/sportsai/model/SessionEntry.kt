@@ -20,7 +20,9 @@ data class SessionEntry(
     val sourceVideoUri: String = "",
     val videoDurationMs: Long = 0L,
     /** Identifies the compatible metric formula/prompt family for progress comparisons. */
-    val analysisProfile: String = AnalysisProfiles.LEGACY_UNKNOWN
+    val analysisProfile: String = AnalysisProfiles.LEGACY_UNKNOWN,
+    /** Structured local batting analysis retained when reopening a saved report. */
+    val swingAnalysis: SwingAnalysisSummary? = null
 ) {
     fun toTechniqueReport(sport: Sport): TechniqueReport = TechniqueReport(
         sport = sport.displayName,
@@ -31,7 +33,8 @@ data class SessionEntry(
         metricScores = metrics,
         aiOverview = aiOverview,
         highlights = highlights,
-        analysisProfile = analysisProfile
+        analysisProfile = analysisProfile,
+        swingAnalysis = swingAnalysis
     )
 }
 

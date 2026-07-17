@@ -55,7 +55,14 @@ class TechniqueAnalyzer {
             Sport.BASEBALL_BAT -> analyzeBatting(result)
             Sport.BASKETBALL_SHOT -> analyzeBasketball(result)
         }
-        return report.copy(analysisProfile = AnalysisProfiles.offline(sport))
+        return report.copy(
+            analysisProfile = AnalysisProfiles.offline(sport),
+            swingAnalysis = if (sport == Sport.BASEBALL_BAT) {
+                SwingMechanicsAnalyzer().analyze(result)
+            } else {
+                null
+            }
+        )
     }
 
     private fun notEnoughData(result: AnalysisResult, sport: Sport): TechniqueReport {
