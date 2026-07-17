@@ -41,6 +41,9 @@ class HistoryRepository(context: Context) {
                     analysisProfile = o.optString(
                         "analysisProfile",
                         com.example.sportsai.model.AnalysisProfiles.LEGACY_UNKNOWN
+                    ),
+                    swingAnalysis = SwingAnalysisJsonCodec.decodeSummary(
+                        o.optJSONObject("swingAnalysis")
                     )
                 )
             }
@@ -91,6 +94,7 @@ class HistoryRepository(context: Context) {
                     .put("sourceVideoUri", e.sourceVideoUri)
                     .put("videoDurationMs", e.videoDurationMs)
                     .put("analysisProfile", e.analysisProfile)
+                        .put("swingAnalysis", SwingAnalysisJsonCodec.encodeSummary(e.swingAnalysis))
             )
         }
         file.writeText(array.toString())

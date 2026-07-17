@@ -266,3 +266,49 @@ Repository: `https://github.com/HajinJoo/SportsAI`
 - The exact final release updated in place on Samsung SM-S721W, preserved the original install timestamp and existing app data, cold-launched in 454 ms, remained running, and produced no app crash or ANR marker.
 - Phone APK: `/sdcard/Download/SportsAI-v2.2.apk`; its SHA-256 matches the PC artifact exactly.
 - Public release: `https://github.com/HajinJoo/SportsAI/releases/tag/v2.2` with `SportsAI-v2.2.apk` and `SHA256SUMS-v2.2.txt` as the only release assets.
+
+## 2026-07-17 — Version 2.3 view-routed structured swing analysis
+
+### Problem addressed
+
+- Batter Lock selected the correct athlete, but the downstream swing rules still treated side, rear, and diagonal clips as one camera geometry.
+- Applying the same projected-joint thresholds to every angle could create unsupported mechanics labels.
+- Gemini needed a richer immutable local contract so it could explain deterministic evidence without becoming the source of measurements or issue codes.
+
+### Delivered
+
+- Added a separate MediaPipe EfficientDet-Lite0 int8 object task restricted to confidence-gated COCO `baseball bat` and `sports ball` observations. Pose landmarks and object boxes remain separate evidence sources.
+- Added multi-frame camera-view classification from median projected shoulder/hip width normalized by torso length. Results are `SIDE`, `REAR`, or `UNKNOWN`, with confidence, usable frame count, and an evidence sentence.
+- Routed confirmed side clips to projected front-knee stability, trail-knee drive, and hand-travel rules.
+- Routed confirmed rear clips to spine-angle change, head movement around the pelvis, and hip-to-shoulder rotation timing.
+- Withheld view-specific issue labels for ambiguous geometry while retaining common motion phases and measurements.
+- Segmented stance, stride, impact zone, and follow-through around a coordinated two-hand motion peak. The impact zone does not assert bat-ball contact.
+- Added schema-v2 local JSON for camera view, phases, numeric measurements, coded issues, and equipment summaries. Existing schema-v1 sessions decode with an unconfirmed camera view.
+- Restricted Gemini to narrative generation from authoritative local JSON and labeled frames. It cannot add, remove, replace, or cross-apply view-specific measurements or issue codes.
+- Added report UI for camera view, confidence, evidence, movement phases, equipment status, measurements, and threshold-based issue evidence.
+- Changed the batting analysis profile to `offline-batter-lock-v3` so incompatible result generations are not compared in one progress series.
+- Bumped the Android app to version 2.3 (`versionCode` 8).
+
+### Honest measurement boundary
+
+- Camera view is an explainable pose-geometry heuristic, not a separately trained image classifier or calibrated probability.
+- Joint angles are 2D projections, not clinical or full-3D measurements.
+- Object boxes do not identify the bat head or sweet spot and do not establish contact, launch angle, trajectory, gaze, radar speed, or real-world distance.
+- Missing equipment detections do not prove that a bat or ball was absent.
+
+### Regression and device verification
+
+- Added unit coverage for side, rear, and ambiguous camera geometry; direction-specific issue routing; schema-v2 round trips; schema-v1 compatibility; and Gemini prompt constraints.
+- Full JVM tests, release lint, debug APK, Android-test APK, and release APK assembly passed.
+- The attributed nine-second game-angle clip passed Batter Lock, object-detector execution, four ordered phases, confirmed camera-view routing, routed numeric measurements, two equipment summaries, and schema-v2 JSON identity.
+- The connected real-video pipeline completed in 78.892 seconds on Samsung SM-S721W / Android API 36.
+- Editor diagnostics reported no errors in the changed mechanics, JSON, Gemini, model, UI, or connected-test files.
+
+### Final release handoff
+
+- Final PC APK: `F:\SportsAI\SportsAI-v2.3.apk` (183,505,026 bytes).
+- Final phone APK: `/sdcard/Download/SportsAI-v2.3.apk` (183,505,026 bytes).
+- PC and phone SHA-256: `B870400C135000213574F199522EB74C299C0FCAB2676017496260A7838910F2`.
+- Manifest verification: package `com.example.sportsai`, version 2.3 (`versionCode` 8), minimum API 29, target API 36, and universal arm64-v8a, armeabi-v7a, x86, and x86_64 native code.
+- Signature verification passed with APK Signature Scheme v3 and release-certificate SHA-256 `97:7C:68:3B:51:AE:C2:4F:AE:E7:1B:E3:D2:6F:DE:13:B1:9A:E6:C7:09:9F:7C:EF:41:38:F6:99:17:36:E8:D9`.
+- The production update preserved the original 2026-07-14 first-install timestamp and existing app data, then cold-launched successfully in 302 ms.

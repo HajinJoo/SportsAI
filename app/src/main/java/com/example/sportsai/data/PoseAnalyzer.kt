@@ -11,6 +11,7 @@ import com.example.sportsai.model.AthleteTrackingMode
 import com.example.sportsai.model.FramePose
 import com.example.sportsai.model.LandmarkPoint
 import com.example.sportsai.model.Sport
+import com.example.sportsai.model.TrackedObject
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.accurate.AccuratePoseDetectorOptions
@@ -221,6 +222,9 @@ class PoseAnalyzer(private val context: Context) {
         var keyFrame: Bitmap? = null
         var keyFramePose: FramePose? = null
         var detector: BatterPoseDetector? = null
+        var equipmentDetector: BatBallDetector? = null
+        val trackedObjects = mutableListOf<TrackedObject>()
+        var objectDetectionFrames = 0
         try {
             retriever.setDataSource(context, videoUri)
             durationMs = duration(retriever)
@@ -231,6 +235,7 @@ class PoseAnalyzer(private val context: Context) {
             }
             val videoSize = videoFrameSize(retriever)
             detector = BatterPoseDetector(context)
+            equipmentDetector = runCatching { BatBallDetector(context) }.getOrNull()
             val stepMs = sampleStep(targetFps)
             var timestampMs = 0L
             while (timestampMs <= durationMs) {
@@ -246,6 +251,23 @@ class PoseAnalyzer(private val context: Context) {
                     try {
                         val poses = detector.detect(bitmap, timestampMs).map { pose ->
                             scaleLandmarksToSource(pose, bitmap, videoSize)
+                        }
+                        val sourceWidth = videoSize?.width ?: bitmap.width
+                        val sourceHeight = videoSize?.height ?: bitmap.height
+                        val activeEquipmentDetector = equipmentDetector
+                        if (activeEquipmentDetector != null) {
+                            try {
+                                trackedObjects += activeEquipmentDetector.detect(
+                                    bitmap = bitmap,
+                                    timestampMs = timestampMs,
+                                    sourceWidth = sourceWidth,
+                                    sourceHeight = sourceHeight
+                                )
+                                objectDetectionFrames++
+                            } catch (_: RuntimeException) {
+                                runCatching { activeEquipmentDetector.close() }
+                                equipmentDetector = null
+                            }
                         }
                         // Empty frames are intentional: they make track coverage and long gaps honest.
                         frames += MultiPoseFrame(
@@ -300,7 +322,9 @@ class PoseAnalyzer(private val context: Context) {
                         rawMotionEvidence = selection.rawMotionEvidence,
                         transverseEvidence = selection.transverseEvidence,
                         winnerMargin = selection.winnerMargin
-                    )
+                    ),
+                    trackedObjects = trackedObjects,
+                    objectDetectionFrames = objectDetectionFrames
                 )
             }
 
@@ -390,7 +414,9 @@ class PoseAnalyzer(private val context: Context) {
                     rawMotionEvidence = selection.rawMotionEvidence,
                     transverseEvidence = selection.transverseEvidence,
                     winnerMargin = selection.winnerMargin
-                )
+                ),
+                trackedObjects = trackedObjects,
+                objectDetectionFrames = objectDetectionFrames
             )
         } catch (cancellation: CancellationException) {
             animationFrames.forEach { frame -> frame.bitmap.recycle() }
@@ -407,6 +433,7 @@ class PoseAnalyzer(private val context: Context) {
             )
         } finally {
             runCatching { detector?.close() }
+            runCatching { equipmentDetector?.close() }
             runCatching { retriever.release() }
         }
     }

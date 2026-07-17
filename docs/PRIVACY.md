@@ -8,8 +8,9 @@ SportsAI analyzes user-selected sports videos. Developers and testers should und
 - Sampled video frames
 - For pitching and basketball shooting, one ML Kit pose with body landmarks and confidence values
 - For batting, up to four MediaPipe pose candidates per sampled frame, each containing 33 body-landmark coordinates, relative depth, and one confidence value combining visibility and presence
+- For batting, confidence-gated MediaPipe object-detector boxes for the COCO `baseball bat` and `sports ball` categories
 - Temporary clip-local tracks used to separate a likely swinging batter from a catcher, umpire, or another person
-- Local biomechanics measurements
+- Local swing phases, biomechanics measurements, and threshold-based mechanics issue labels
 - Skeleton replay bitmaps held in memory
 - Locally selected sport-aware highlight boundaries
 - Generated MP4 highlight clips stored in app-private files
@@ -23,7 +24,8 @@ When the device owner saves their own Gemini API key in Settings and analyzed fr
 - The user-provided API key in Google's `x-goog-api-key` request header
 - Up to eight JPEG-compressed frames focused on the detected sports action
 - The selected sport name
-- A coaching prompt requesting score, summary, strengths, issues, and tips
+- The authoritative local analysis JSON containing the local score, metric scores, phase boundaries, summarized measurements, issue labels, and aggregate bat/ball detection status
+- A coaching prompt requesting narrative summary, strengths, issue explanations, drills, and an overview without changing local numeric results or labels
 
 The original video file and generated highlight MP4 files are not sent by the current implementation. Google's handling of API requests is governed by the terms and privacy policies applicable to the Gemini API account.
 
@@ -49,10 +51,11 @@ For accepted analyses, the app stores a JSON file in Android app-private storage
 - User-selected filming date
 - Analysis score, summary, findings, and detection rate
 - Sport-specific metric scores and the AI skill overview
+- Structured phase boundaries, summarized biomechanics measurements, mechanics issue labels, and aggregate bat/ball detection status
 - Highlight time ranges and app-private file paths
 - The system picker URI and source-video duration, used to re-cut an edited highlight when Android still grants access
 
-It also stores the generated highlight MP4s under the app's private files directory. It does not copy the original video, store API request or response frames, persist the full pose timeline, or retain the unselected MediaPipe pose candidates.
+It also stores the generated highlight MP4s under the app's private files directory. It does not copy the original video, store API request or response frames, persist the full pose timeline, retain the unselected MediaPipe pose candidates, or retain raw frame-by-frame bat/ball boxes.
 
 Users can remove individual timeline sessions from the app; this also deletes that session's generated highlight files. The encrypted key preferences, `session_history.json`, and generated `highlights/` directory are explicitly excluded from Android cloud backup and device transfer. Uninstalling or clearing application data therefore removes those app-private items. The original video remains wherever the user selected it from and is not deleted by SportsAI.
 
@@ -73,7 +76,7 @@ Before production deployment:
 
 ## Measurement limitations
 
-Body-pose landmarks are not equipment or ball detectors. The local pipeline does not measure or prove bat or ball position, bat-ball contact, eye gaze, ball flight, launch angle, radar speed, physical distance, or athlete identity. Pose-based speed and Ball Tracking scores are movement proxies only. Users should not treat these values as sensor, medical, scouting, or officiating measurements.
+Body-pose landmarks are not equipment or ball detectors. SportsAI uses a separate COCO object detector that may return confidence-gated `baseball bat` or `sports ball` boxes, but a miss does not prove absence and a detection does not establish pitch identity, contact, trajectory, or outcome. The local pipeline does not prove bat-ball contact, eye gaze, ball flight, launch angle, radar speed, physical distance, or athlete identity. Pose-based speed and Ball Tracking scores are movement proxies only. Users should not treat these values as sensor, medical, scouting, or officiating measurements.
 
 ## Disclaimer
 

@@ -23,6 +23,10 @@ captures/
 *.der
 signing/
 
+# Local reference-training inputs and private diagnostics
+training-data/
+reference-training-output/
+
 # Environment and secrets
 .env
 .env.*

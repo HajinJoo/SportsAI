@@ -2,15 +2,12 @@ package com.example.sportsai.data
 
 import android.graphics.Bitmap
 import android.util.Base64
-import com.example.sportsai.model.AnalysisResult
-import com.example.sportsai.model.AnalysisProfiles
 import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.LandmarkPoint
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
-import com.example.sportsai.model.metrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -53,14 +50,14 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
      */
     suspend fun coach(
         frames: List<AnimationFrame>,
-        result: AnalysisResult,
-        sport: Sport
+        sport: Sport,
+        localReport: TechniqueReport
     ): TechniqueReport = withContext(Dispatchers.IO) {
         val apiKey = apiKeyProvider()?.trim().orEmpty()
         require(apiKey.isNotEmpty()) { "Gemini API key not configured" }
 
         val selected = pickFrames(frames, max = 8)
-        val body = buildRequest(selected, sport)
+        val body = buildRequest(selected, sport, localReport)
 
         val conn = (URL(endpoint).openConnection()
                 as HttpURLConnection).apply {
@@ -83,7 +80,7 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
                 throw RuntimeException(connectionMessage(code))
             }
 
-            parseReport(text, sport, result.detectionRate, selected.size)
+            parseReport(text, sport, localReport, selected.size)
         } finally {
             conn.disconnect()
         }
@@ -127,10 +124,21 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         return (0 until max).map { frames[(it * step).toInt().coerceIn(0, frames.size - 1)] }
     }
 
-    private fun buildRequest(frames: List<AnimationFrame>, sport: Sport): JSONObject {
+    private fun buildRequest(
+        frames: List<AnimationFrame>,
+        sport: Sport,
+        localReport: TechniqueReport
+    ): JSONObject {
         val parts = JSONArray()
 
         parts.put(JSONObject().put("text", promptFor(sport)))
+        parts.put(
+            JSONObject().put(
+                "text",
+                "ON_DEVICE_ANALYSIS_JSON (authoritative numeric input):\n" +
+                    SwingAnalysisJsonCodec.encodeReport(localReport).toString()
+            )
+        )
 
         frames.forEachIndexed { index, frame ->
             parts.put(
@@ -153,25 +161,6 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
             JSONObject().put("role", "user").put("parts", parts)
         )
 
-        // Ask Gemini to return strict JSON matching our report schema.
-        val metricProperties = JSONObject()
-        val metricRequired = JSONArray()
-        sport.metrics.forEach { metric ->
-            metricProperties.put(
-                metric.name,
-                JSONObject()
-                    .put("type", "INTEGER")
-                    .put("minimum", 0)
-                    .put("maximum", 100)
-                    .put("description", metric.description)
-            )
-            metricRequired.put(metric.name)
-        }
-        val metricScoreSchema = JSONObject()
-            .put("type", "OBJECT")
-            .put("properties", metricProperties)
-            .put("required", metricRequired)
-
         val schema = JSONObject()
             .put("type", "OBJECT")
             .put(
@@ -189,11 +178,8 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
                     .put("limitations", stringArraySchema(
                         "Concrete visibility limits such as an unseen ball, cropped feet, blur, obstruction, or missing action phase. Empty only if none apply."
                     ))
-                    .put("score", JSONObject().put("type", "INTEGER")
-                        .put("minimum", 0).put("maximum", 100)
-                        .put("description", "Evidence-grounded overall technique score; use 0 when athleteVisible is false."))
                     .put("summary", JSONObject().put("type", "STRING")
-                        .put("description", "One concise coaching sentence grounded only in visible evidence."))
+                        .put("description", "One concise professional coaching sentence grounded in the local analysis JSON and visible evidence."))
                     .put("strengths", stringArraySchema(
                         "One to three visible strengths; each item must cite at least one exact frame label."
                     ))
@@ -203,16 +189,15 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
                     .put("tips", stringArraySchema(
                         "One to three specific drills tied to a cited visible issue; do not invent an unseen fault."
                     ))
-                    .put("metricScores", metricScoreSchema)
                     .put("overview", JSONObject().put("type", "STRING")
-                        .put("description", "A three- or four-sentence evidence-grounded skill overview that distinguishes visible movement potential from measured speed or ball flight."))
+                        .put("description", "A three- or four-sentence professional coaching overview that explains the supplied local measurements and issue tags without changing them."))
             )
             .put("required", JSONArray().put("athleteVisible")
                 .put("visibilityConfidence").put("observedFrameLabels")
                 .put("visibilitySummary").put("limitations")
-                .put("score").put("summary")
+                .put("summary")
                 .put("strengths").put("issues").put("tips")
-                .put("metricScores").put("overview"))
+                .put("overview"))
 
         val genConfig = JSONObject()
             .put("responseMimeType", "application/json")
@@ -236,9 +221,6 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         .put("items", JSONObject().put("type", "STRING"))
         .apply { if (description != null) put("description", description) }
 
-    private fun metricAreasFor(sport: Sport): String =
-        sport.metrics.joinToString { it.name }
-
     internal fun systemInstruction(): String = """
         You are an evidence-grounded sports video analyst. The submitted images are the primary
         evidence. Inspect the pixels in every labeled frame before scoring. Never assume an athlete,
@@ -248,6 +230,11 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         aligns with the supplied body-box and keypoints; ignore nearby catchers, umpires, defenders,
         or spectators. If that target cannot be matched to one visible athlete across at least three
         frames, set athleteVisible to false and do not manufacture coaching.
+        The ON_DEVICE_ANALYSIS_JSON is authoritative for numeric scores, phase boundaries,
+        camera view, measurements, and issue codes. Use it to explain the result in a professional
+        baseball coach's tone. Do not recalculate, replace, add, or remove its measurements or issue
+        codes. Do not apply side-view rules to a rear-view analysis or rear-view rules to a side-view
+        analysis. If cameraView is UNKNOWN, state that view-specific mechanics were withheld.
         Return only the requested JSON; do not reveal chain-of-thought.
     """.trimIndent()
 
@@ -262,7 +249,7 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
           directly visible in at least three submitted images; do not choose the largest bystander.
         - State what body parts and relevant equipment are actually visible across the sequence.
         - If the athlete is too small, blurred, obstructed, cropped, absent, or the relevant action
-          is not captured, set athleteVisible=false, score=0, use empty strengths/issues/tips, and
+          is not captured, set athleteVisible=false, use empty strengths/issues/tips, and
           explain the filming limitation. Do not fill gaps with a typical ${sport.displayName} motion.
 
         ${sportEvidenceRules(sport)}
@@ -274,17 +261,13 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         - Do not claim measured mph, km/h, launch angle, ball flight, or contact quality from stills.
         - A pose point may guide attention but cannot override what is visibly present in the image.
 
-        Give:
-        - score: an integer 0-100 overall technique rating.
+                Use ON_DEVICE_ANALYSIS_JSON as the numeric and labeling source. Give:
         - summary: one short encouraging sentence.
-        - strengths: 1-3 short bullet points on what they do well.
-        - issues: 1-3 short bullet points on the biggest problems.
-        - tips: 1-3 short, specific drills or cues to improve.
-        - metricScores: a JSON object mapping each of these technique areas to a 0-100 score:
-          ${metricAreasFor(sport)}.
-          e.g. {"Arm Action": 82, "Lower Body": 65, "Trunk": 74, "Balance": 88}.
+                - strengths: 1-3 short points that explain strong supplied measurements.
+                - issues: explain only supplied issue codes, with exact frame citations where visible.
+                - tips: 1-3 specific drills tied to the supplied issue codes.
         - overview: a 3-4 sentence assessment of the athlete's overall skill. Mention their
-          strongest area, their weakest area, and give a motivational direction for improvement.
+                    strongest measured area, priority issue, and a practical direction for improvement.
 
         Treat every metric as a comparable 0-100 coaching score. Speed metrics describe visible
         movement-speed potential, not radar-measured mph or km/h. Ball Tracking is only a visible
@@ -299,10 +282,16 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
             BATTING CHECKLIST:
             - Verify that the body-box target is visibly the batter and that a bat is visibly present;
               never substitute the catcher/umpire or treat pose landmarks as a bat.
+                        - Respect the authoritative cameraView routing. For SIDE, explain timing, inferred
+                            front/trail-knee angles, and hand-load signals that are present in the JSON. For REAR,
+                            explain spine/head stability and rotation-sequence signals that are present. Never
+                            invent a view-specific metric omitted by the local analyzer.
             - Look for visible setup/balance, load, stride, hip-to-shoulder sequence, hand path,
               head stability, contact-zone positioning, extension, and finish only where captured.
             - Never claim bat-ball contact unless the ball and contact are unambiguously visible.
               Otherwise say "contact-zone frame," not "contact."
+                        - Object boxes do not establish bat-head angle, sweet-spot contact, launch angle, or ball
+                            trajectory. Do not claim those measurements unless a future local JSON field supplies them.
             - Bat Speed Potential means visible body/hand sequencing, never measured bat velocity.
             - Ball Tracking means visible head/upper-body stability only; it does not prove gaze,
               eye-line direction, or ball trajectory.
@@ -393,7 +382,7 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
     private fun parseReport(
         response: String,
         sport: Sport,
-        detectionRate: Float,
+        localReport: TechniqueReport,
         submittedFrameCount: Int
     ): TechniqueReport {
         val root = JSONObject(response)
@@ -419,7 +408,6 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
             limitations = limitations,
             submittedFrameCount = submittedFrameCount
         )
-        val score = json.optInt("score", 0).coerceIn(0, 100)
         val summary = json.optString("summary", "Analysis complete.")
         val requestedOverview = json.optString("overview", "").trim()
 
@@ -438,15 +426,7 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         )
         addFindings(findings, json.optJSONArray("tips"), FindingType.TIP, "Drill")
 
-        // Parse per-area metric scores.
-        val metricScores = linkedMapOf<String, Int>()
-        val metricsObj = json.optJSONObject("metricScores")
-        sport.metrics.forEach { metric ->
-            metricScores[metric.name] = metricsObj
-                ?.optInt(metric.name, 0)
-                ?.coerceIn(0, 100)
-                ?: 0
-        }
+        val metricScores = localReport.metricScores
         val strongest = metricScores.maxByOrNull { it.value }
         val weakest = metricScores.minByOrNull { it.value }
         val overview = normalizeSkillOverview(
@@ -463,13 +443,14 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
 
         return TechniqueReport(
             sport = sport.displayName,
-            overallScore = score,
+            overallScore = localReport.overallScore,
             summary = summary,
             findings = findings,
-            detectionRate = detectionRate,
+            detectionRate = localReport.detectionRate,
             metricScores = metricScores,
             aiOverview = overview,
-            analysisProfile = AnalysisProfiles.GEMINI_EVIDENCE_V2
+            analysisProfile = localReport.analysisProfile,
+            swingAnalysis = localReport.swingAnalysis
         )
     }
 

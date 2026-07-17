@@ -24,6 +24,19 @@ data class AnimationFrame(
     val pose: FramePose
 )
 
+enum class TrackedObjectType { BAT, BALL }
+
+/** A lightweight detector result in full-frame pixel coordinates. */
+data class TrackedObject(
+    val timestampMs: Long,
+    val type: TrackedObjectType,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val confidence: Float
+)
+
 enum class AthleteTrackingMode {
     /** Existing single-person tracking used for pitching and basketball. */
     SINGLE_PERSON,
@@ -64,7 +77,11 @@ data class AnalysisResult(
     val animationFrames: List<AnimationFrame> = emptyList(),
     /** Duration reported by the source video container. */
     val durationMs: Long = 0L,
-    val athleteTracking: AthleteTrackingInfo = AthleteTrackingInfo()
+    val athleteTracking: AthleteTrackingInfo = AthleteTrackingInfo(),
+    /** Bat/ball observations from a separate object detector; pose landmarks never imply them. */
+    val trackedObjects: List<TrackedObject> = emptyList(),
+    /** Number of sampled frames successfully submitted to the object detector. */
+    val objectDetectionFrames: Int = 0
 ) {
     val detectionRate: Float
         get() = if (framesSampled == 0) 0f else framesWithPose.toFloat() / framesSampled
