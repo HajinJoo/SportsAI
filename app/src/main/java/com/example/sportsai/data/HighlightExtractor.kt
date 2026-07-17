@@ -19,22 +19,41 @@ class HighlightExtractor {
         if (maxClips <= 0 || timeline.size < MIN_FRAMES) return emptyList()
 
         val side = dominantArm(timeline)
-        val rawScores = timeline.indices.map { index ->
-            if (index == 0) 0.0 else actionScore(
-                sport = sport,
-                previous = timeline[index - 1],
-                current = timeline[index],
-                side = side
-            )
+        val rawScores = if (sport == Sport.BASEBALL_BAT) {
+            coordinatedBattingMotionScores(timeline)
+        } else {
+            timeline.indices.map { index ->
+                if (index == 0) 0.0 else {
+                actionScore(
+                    sport = sport,
+                    previous = timeline[index - 1],
+                    current = timeline[index],
+                    side = side
+                )
+                }
+            }
         }
-        // A short temporal filter prevents one-frame pose jitter from becoming a highlight.
-        val scores = rawScores.indices.map { index ->
-            val from = (index - 1).coerceAtLeast(0)
-            val to = (index + 1).coerceAtMost(rawScores.lastIndex)
-            rawScores.subList(from, to + 1).average()
+        // Batting uses the strongest three-interval median so a single wrist jitter or camera move
+        // cannot become the highlight. Other sports retain the short moving-average filter.
+        val scores = if (sport == Sport.BASEBALL_BAT) {
+            rawScores.indices.map { index ->
+                if (index < 2 || index >= rawScores.lastIndex) 0.0 else {
+                    rawScores.subList(index - 1, index + 2).sorted()[1]
+                }
+            }
+        } else {
+            rawScores.indices.map { index ->
+                val from = (index - 1).coerceAtLeast(0)
+                val to = (index + 1).coerceAtMost(rawScores.lastIndex)
+                rawScores.subList(from, to + 1).average()
+            }
         }
-        val usableIndices = 1 until scores.size
-        val peakIndex = usableIndices.maxByOrNull(scores::get) ?: return emptyList()
+        val peakIndex = if (sport == Sport.BASEBALL_BAT) {
+            coordinatedBattingPeakIndex(timeline)
+        } else {
+            val usableIndices = 1 until scores.size
+            usableIndices.maxByOrNull(scores::get)
+        } ?: return emptyList()
         val peakScore = scores[peakIndex]
         if (!peakScore.isFinite() || peakScore <= 0.0) return emptyList()
 
@@ -60,7 +79,7 @@ class HighlightExtractor {
                 id = System.currentTimeMillis(),
                 label = when (sport) {
                     Sport.BASEBALL_PITCH -> "Best pitch · release"
-                    Sport.BASEBALL_BAT -> "Best swing · contact"
+                    Sport.BASEBALL_BAT -> "Best swing · peak hand speed"
                     Sport.BASKETBALL_SHOT -> "Best shot · release"
                 },
                 startMs = startMs,

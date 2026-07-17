@@ -3,6 +3,7 @@ package com.example.sportsai.data
 import android.graphics.Bitmap
 import android.util.Base64
 import com.example.sportsai.model.AnalysisResult
+import com.example.sportsai.model.AnalysisProfiles
 import com.example.sportsai.model.AnimationFrame
 import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
@@ -243,8 +244,10 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         evidence. Inspect the pixels in every labeled frame before scoring. Never assume an athlete,
         bat, ball, contact event, throwing hand, handedness, gaze direction, speed, or action phase
         that is not directly visible. On-device pose coordinates are supplemental tracker signals,
-        not proof of an object or event. If the same athlete and relevant movement cannot be verified
-        across at least three frames, set athleteVisible to false and do not manufacture coaching.
+        not proof of an object or event. In each frame, assess only the visible person whose body
+        aligns with the supplied body-box and keypoints; ignore nearby catchers, umpires, defenders,
+        or spectators. If that target cannot be matched to one visible athlete across at least three
+        frames, set athleteVisible to false and do not manufacture coaching.
         Return only the requested JSON; do not reveal chain-of-thought.
     """.trimIndent()
 
@@ -255,7 +258,8 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         size, and supplemental pose-tracker evidence.
 
         VISIBILITY GATE:
-        - Confirm that the same athlete is directly visible in at least three submitted images.
+        - Confirm that the same target athlete matching the supplied body-box and keypoints is
+          directly visible in at least three submitted images; do not choose the largest bystander.
         - State what body parts and relevant equipment are actually visible across the sequence.
         - If the athlete is too small, blurred, obstructed, cropped, absent, or the relevant action
           is not captured, set athleteVisible=false, score=0, use empty strengths/issues/tips, and
@@ -283,8 +287,9 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
           strongest area, their weakest area, and give a motivational direction for improvement.
 
         Treat every metric as a comparable 0-100 coaching score. Speed metrics describe visible
-        movement-speed potential, not radar-measured mph or km/h. Ball Tracking describes visible
-        head/eye-line stability and tracking behavior; do not claim measured ball-flight data.
+        movement-speed potential, not radar-measured mph or km/h. Ball Tracking is only a visible
+        head/upper-body stability coaching proxy; do not claim measured gaze, target alignment,
+        or ball-flight data.
 
         Be specific to ${sport.displayName} mechanics, concise, friendly, and honest about limits.
     """.trimIndent()
@@ -292,14 +297,15 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
     private fun sportEvidenceRules(sport: Sport): String = when (sport) {
         Sport.BASEBALL_BAT -> """
             BATTING CHECKLIST:
-            - Verify the batter and bat are visibly present; never treat pose landmarks as a bat.
+            - Verify that the body-box target is visibly the batter and that a bat is visibly present;
+              never substitute the catcher/umpire or treat pose landmarks as a bat.
             - Look for visible setup/balance, load, stride, hip-to-shoulder sequence, hand path,
               head stability, contact-zone positioning, extension, and finish only where captured.
             - Never claim bat-ball contact unless the ball and contact are unambiguously visible.
               Otherwise say "contact-zone frame," not "contact."
             - Bat Speed Potential means visible body/hand sequencing, never measured bat velocity.
-            - Ball Tracking means visible head/eye-line stability only; it does not prove gaze or
-              ball trajectory when the eyes or ball cannot be seen clearly.
+            - Ball Tracking means visible head/upper-body stability only; it does not prove gaze,
+              eye-line direction, or ball trajectory.
         """.trimIndent()
 
         Sport.BASEBALL_PITCH -> """
@@ -415,10 +421,7 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
         )
         val score = json.optInt("score", 0).coerceIn(0, 100)
         val summary = json.optString("summary", "Analysis complete.")
-        val overview = json.optString("overview", "").ifBlank {
-            "$summary Your overall score is $score/100. Review the metric breakdown to identify " +
-                "your strongest area and the clearest opportunity. Compare another session after practice to confirm progress."
-        }
+        val requestedOverview = json.optString("overview", "").trim()
 
         val findings = mutableListOf<Finding>()
         findings += Finding(FindingType.TIP, "Visual evidence", visibilitySummary)
@@ -444,6 +447,19 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
                 ?.coerceIn(0, 100)
                 ?: 0
         }
+        val strongest = metricScores.maxByOrNull { it.value }
+        val weakest = metricScores.minByOrNull { it.value }
+        val overview = normalizeSkillOverview(
+            primary = requestedOverview.takeIf {
+                splitOverviewSentences(it).size in 3..4
+            }.orEmpty(),
+            fallbacks = listOfNotNull(
+                summary,
+                strongest?.let { "${it.key} is currently your strongest area at ${it.value}/100." },
+                weakest?.let { "${it.key} is your clearest opportunity at ${it.value}/100." },
+                "Use the recommended drill in your next practice, then compare another session to confirm progress."
+            )
+        )
 
         return TechniqueReport(
             sport = sport.displayName,
@@ -452,7 +468,8 @@ class GeminiCoach(private val apiKeyProvider: () -> String?) {
             findings = findings,
             detectionRate = detectionRate,
             metricScores = metricScores,
-            aiOverview = overview
+            aiOverview = overview,
+            analysisProfile = AnalysisProfiles.GEMINI_EVIDENCE_V2
         )
     }
 

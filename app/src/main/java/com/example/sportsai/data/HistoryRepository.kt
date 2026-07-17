@@ -37,7 +37,11 @@ class HistoryRepository(context: Context) {
                     findings = parseFindings(o.optJSONArray("findings")),
                     detectionRate = o.optDouble("detectionRate", 0.0).toFloat(),
                     sourceVideoUri = o.optString("sourceVideoUri", ""),
-                    videoDurationMs = o.optLong("videoDurationMs", 0L)
+                    videoDurationMs = o.optLong("videoDurationMs", 0L),
+                    analysisProfile = o.optString(
+                        "analysisProfile",
+                        com.example.sportsai.model.AnalysisProfiles.LEGACY_UNKNOWN
+                    )
                 )
             }
         } catch (_: Exception) {
@@ -86,6 +90,7 @@ class HistoryRepository(context: Context) {
                     .put("detectionRate", e.detectionRate.toDouble())
                     .put("sourceVideoUri", e.sourceVideoUri)
                     .put("videoDurationMs", e.videoDurationMs)
+                    .put("analysisProfile", e.analysisProfile)
             )
         }
         file.writeText(array.toString())

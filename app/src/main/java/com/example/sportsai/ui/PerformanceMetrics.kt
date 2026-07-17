@@ -49,11 +49,11 @@ fun AiSkillOverviewCard(overview: String, modifier: Modifier = Modifier) {
                     Modifier.size(34.dp).background(SkyCyan.copy(alpha = 0.16f), RoundedCornerShape(11.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("AI", color = SkyCyan, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                    Text("S", color = SkyCyan, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("AI skill overview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Skill overview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("Your current level in 3–4 sentences", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -84,7 +84,7 @@ fun PerformanceMetricsSection(
         }
         Spacer(Modifier.height(7.dp))
         Text(
-            "Filter the movement, then compare each score with your previous session.",
+            "Filter the movement, then compare scores with the previous session analyzed the same way.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -163,7 +163,12 @@ private fun MetricScoreRow(
                 }
                 Spacer(Modifier.width(10.dp))
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(if (score == null) "—" else "$score", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = metricColor(value))
+                    Text(
+                        if (score == null) "—" else "$score",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black,
+                        color = if (score == null) MaterialTheme.colorScheme.onSurfaceVariant else metricColor(value)
+                    )
                     Text(trend, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = trendColor)
                 }
             }
@@ -171,7 +176,7 @@ private fun MetricScoreRow(
             LinearProgressIndicator(
                 progress = { if (score == null) 0f else value.coerceIn(0, 100) / 100f },
                 modifier = Modifier.fillMaxWidth().height(7.dp),
-                color = metricColor(value),
+                color = if (score == null) MaterialTheme.colorScheme.outline else metricColor(value),
                 trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.13f)
             )
         }

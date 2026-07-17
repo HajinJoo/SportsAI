@@ -18,7 +18,9 @@ data class SessionEntry(
     val detectionRate: Float = 0f,
     /** Persisted picker URI used to re-cut a highlight when available. */
     val sourceVideoUri: String = "",
-    val videoDurationMs: Long = 0L
+    val videoDurationMs: Long = 0L,
+    /** Identifies the compatible metric formula/prompt family for progress comparisons. */
+    val analysisProfile: String = AnalysisProfiles.LEGACY_UNKNOWN
 ) {
     fun toTechniqueReport(sport: Sport): TechniqueReport = TechniqueReport(
         sport = sport.displayName,
@@ -28,7 +30,8 @@ data class SessionEntry(
         detectionRate = detectionRate,
         metricScores = metrics,
         aiOverview = aiOverview,
-        highlights = highlights
+        highlights = highlights,
+        analysisProfile = analysisProfile
     )
 }
 

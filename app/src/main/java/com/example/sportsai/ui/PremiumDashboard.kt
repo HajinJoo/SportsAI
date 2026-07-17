@@ -19,6 +19,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -88,6 +90,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sportsai.model.AnimationFrame
+import com.example.sportsai.model.AthleteTrackingInfo
+import com.example.sportsai.model.AthleteTrackingMode
 import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.FramePose
@@ -95,6 +99,7 @@ import com.example.sportsai.model.HighlightClip
 import com.example.sportsai.model.SessionEntry
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
+import com.example.sportsai.model.isPartialMetricScore
 import com.example.sportsai.ui.theme.EnergyOrange
 import com.example.sportsai.ui.theme.GoodGreen
 import com.example.sportsai.ui.theme.ScoreHigh
@@ -421,14 +426,20 @@ private fun DashboardBottomBar(
                     val showStatus = tab == DashboardTab.UPLOAD && analysisState !is AnalysisUiState.Idle
                     val statusColor = when (analysisState) {
                         is AnalysisUiState.Analyzing -> SkyCyan
-                        is AnalysisUiState.Done -> ScoreHigh
+                        is AnalysisUiState.Done -> if (
+                            analysisState.sport == Sport.BASEBALL_BAT &&
+                            analysisState.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED
+                        ) WarnAmber else ScoreHigh
                         is AnalysisUiState.ViewingPastSession -> ScoreHigh
                         is AnalysisUiState.Error -> ScoreLow
                         AnalysisUiState.Idle -> Color.Transparent
                     }
                     val statusText = when (analysisState) {
                         is AnalysisUiState.Analyzing -> "Analysis in progress"
-                        is AnalysisUiState.Done -> "Analysis ready"
+                        is AnalysisUiState.Done -> if (
+                            analysisState.sport == Sport.BASEBALL_BAT &&
+                            analysisState.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED
+                        ) "No score created" else "Analysis ready"
                         is AnalysisUiState.ViewingPastSession -> "Historical analysis open"
                         is AnalysisUiState.Error -> "Analysis error"
                         AnalysisUiState.Idle -> "Ready to upload"
@@ -602,29 +613,48 @@ private fun UploadDestination(
 
             is AnalysisUiState.Analyzing -> AnalysisExperience(current)
             is AnalysisUiState.Done -> {
-                val previous = timeline
-                    .filter { it.sportName == current.sport.name && it.id != current.sessionId }
-                    .maxByOrNull { it.filmedAtMillis }
-                ResultsDashboard(
-                    state = current,
-                    previousSession = previous,
-                    selectedMetric = selectedMetric,
-                    highlightEditState = highlightEditState,
-                    onMetricSelected = onMetricSelected,
-                    onSaveDate = onSaveDate,
-                    onAnalyzeAnother = onReset,
-                    onUpdateHighlight = onUpdateHighlight,
-                    onClearHighlightError = onClearHighlightError
-                )
+                if (current.sport == Sport.BASEBALL_BAT &&
+                    current.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED
+                ) {
+                    BatterLockRetryDashboard(
+                        state = current,
+                        onChooseAnotherClip = onPickVideo,
+                        onBackToUpload = onReset
+                    )
+                } else {
+                    val previous = timeline
+                        .filter {
+                            it.sportName == current.sport.name &&
+                                it.analysisProfile == current.report.analysisProfile &&
+                                it.id != current.sessionId &&
+                                (current.filmedAtMillis == null ||
+                                    it.filmedAtMillis < current.filmedAtMillis)
+                        }
+                        .maxByOrNull { it.filmedAtMillis }
+                    ResultsDashboard(
+                        state = current,
+                        previousSession = previous,
+                        selectedMetric = selectedMetric,
+                        highlightEditState = highlightEditState,
+                        onMetricSelected = onMetricSelected,
+                        onSaveDate = onSaveDate,
+                        onAnalyzeAnother = onReset,
+                        onUpdateHighlight = onUpdateHighlight,
+                        onClearHighlightError = onClearHighlightError
+                    )
+                }
             }
             is AnalysisUiState.ViewingPastSession -> {
                 val sorted = timeline
                     .filter { it.sportName == current.sport.name }
                     .sortedBy { it.filmedAtMillis }
                 val index = sorted.indexOfFirst { it.id == current.entry.id }
+                val compatiblePrevious = sorted.take(index.coerceAtLeast(0)).lastOrNull {
+                    it.analysisProfile == current.entry.analysisProfile
+                }
                 PastSessionDashboard(
                     state = current,
-                    previousSession = sorted.getOrNull(index - 1),
+                    previousSession = compatiblePrevious,
                     selectedMetric = selectedMetric,
                     highlightEditState = highlightEditState,
                     onMetricSelected = onMetricSelected,
@@ -684,7 +714,7 @@ private fun TimelineDestination(
 
 @Composable
 private fun HomeStats(entries: List<SessionEntry>) {
-    val best = entries.maxOfOrNull { it.score }
+    val best = entries.filterNot { it.isPartialMetricScore }.maxOfOrNull { it.score }
     val sports = entries.map { it.sportName }.distinct().size
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
         SummaryStat("SESSIONS", "${entries.size}", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
@@ -751,7 +781,12 @@ private fun RecentSessionPanel(entry: SessionEntry, onOpenTimeline: () -> Unit) 
                     Modifier.size(58.dp).background(scoreColor(entry.score).copy(alpha = 0.14f), RoundedCornerShape(18.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("${entry.score}", style = MaterialTheme.typography.titleLarge, color = scoreColor(entry.score), fontWeight = FontWeight.Black)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("${entry.score}", style = MaterialTheme.typography.titleLarge, color = scoreColor(entry.score), fontWeight = FontWeight.Black)
+                        if (entry.isPartialMetricScore) {
+                            Text("MEASURED", style = MaterialTheme.typography.labelSmall, color = scoreColor(entry.score), fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
@@ -843,7 +878,7 @@ private fun HeroPanel() {
                 Spacer(Modifier.height(24.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     HeroMetric("33", "body points", Modifier.weight(1f))
-                    HeroMetric("AI", "coach review", Modifier.weight(1f))
+                    HeroMetric("ON", "device coach", Modifier.weight(1f))
                     HeroMetric("∞", "progress", Modifier.weight(1f))
                 }
             }
@@ -987,7 +1022,7 @@ private fun UploadPanel(sport: Sport, onPickVideo: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("Upload your clip", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(
-                        "Video stays on your device until AI review",
+                        "Original video stays local; Gemini uses selected frames only when enabled",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1091,7 +1126,7 @@ private fun AnalysisExperience(state: AnalysisUiState.Analyzing) {
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    if (scanning) "${(progress * 100).roundToInt()}%" else "AI",
+                    if (scanning) "${(progress * 100).roundToInt()}%" else "COACH",
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Black
                 )
@@ -1167,6 +1202,109 @@ private fun StepPill(number: String, label: String, active: Boolean, complete: B
 }
 
 @Composable
+private fun BatterLockRetryDashboard(
+    state: AnalysisUiState.Done,
+    onChooseAnotherClip: () -> Unit,
+    onBackToUpload: () -> Unit
+) {
+    Column {
+        Text(
+            "NO SCORE CREATED",
+            style = MaterialTheme.typography.labelSmall,
+            color = WarnAmber,
+            fontWeight = FontWeight.Black
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            "We couldn't identify the batter safely",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Black
+        )
+        Spacer(Modifier.height(18.dp))
+        Card(
+            shape = PageShape,
+            colors = CardDefaults.cardColors(
+                containerColor = WarnAmber.copy(alpha = 0.10f),
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(22.dp)) {
+                Surface(
+                    shape = CircleShape,
+                    color = WarnAmber.copy(alpha = 0.16f),
+                    contentColor = WarnAmber
+                ) {
+                    Text(
+                        "BATTER LOCK PAUSED",
+                        Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black,
+                        color = WarnAmber
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    state.report.summary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    if (state.athleteTracking.maxPeopleDetected > 1) {
+                        "Up to ${state.athleteTracking.maxPeopleDetected} people were visible, but no continuous track had clearly stronger two-hand swing evidence."
+                    } else {
+                        "The clip did not contain one continuous, clearly visible two-hand swing track."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Nothing from this clip was added to your score, metrics, highlights, or progress timeline.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Card(
+            shape = CardShape,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Text("For the next clip", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Trim to one complete swing. Keep the batter's full body, both hands, hips, knees, and feet visible from setup through follow-through. A steady side angle with the catcher and umpire farther behind works best.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.height(22.dp))
+        Button(
+            onClick = onChooseAnotherClip,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Text("Choose a clearer clip", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(
+            onClick = onBackToUpload,
+            modifier = Modifier.fillMaxWidth().height(54.dp),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Text("Back to upload", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
 private fun ResultsDashboard(
     state: AnalysisUiState.Done,
     previousSession: SessionEntry?,
@@ -1212,7 +1350,12 @@ private fun ResultsDashboard(
             onMetricSelected = onMetricSelected
         )
         Spacer(Modifier.height(24.dp))
-        MotionPanel(state.animationFrames, state.keyFrame, state.keyFramePose)
+        MotionPanel(
+            state.animationFrames,
+            state.keyFrame,
+            state.keyFramePose,
+            state.athleteTracking
+        )
         Spacer(Modifier.height(24.dp))
         HighlightsSection(
             highlights = state.report.highlights,
@@ -1298,10 +1441,12 @@ private fun PastSessionDashboard(
 @Composable
 private fun PremiumScoreCard(report: TechniqueReport) {
     val scoreColor = scoreColor(report.overallScore)
+    val partialScore = report.isPartialMetricScore
     var start by remember(report) { mutableStateOf(false) }
     LaunchedEffect(report) { start = true }
     val fraction by animateFloatAsState(if (start) report.overallScore / 100f else 0f, tween(1100), label = "scoreReveal")
     val rating = when {
+        partialScore -> "PARTIAL VIEW"
         report.overallScore >= 85 -> "ELITE FORM"
         report.overallScore >= 70 -> "STRONG BASE"
         report.overallScore >= 50 -> "BUILDING"
@@ -1328,13 +1473,13 @@ private fun PremiumScoreCard(report: TechniqueReport) {
                 val compact = maxWidth < 430.dp
                 if (compact) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        ScoreGauge(fraction, scoreColor)
+                        ScoreGauge(fraction, scoreColor, if (partialScore) "MEASURED" else "OVERALL")
                         Spacer(Modifier.height(18.dp))
                         ScoreCopy(report, rating, centered = true)
                     }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        ScoreGauge(fraction, scoreColor)
+                        ScoreGauge(fraction, scoreColor, if (partialScore) "MEASURED" else "OVERALL")
                         Spacer(Modifier.width(24.dp))
                         ScoreCopy(report, rating, centered = false, modifier = Modifier.weight(1f))
                     }
@@ -1345,7 +1490,7 @@ private fun PremiumScoreCard(report: TechniqueReport) {
 }
 
 @Composable
-private fun ScoreGauge(fraction: Float, color: Color) {
+private fun ScoreGauge(fraction: Float, color: Color, label: String) {
     Box(Modifier.size(148.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val stroke = Stroke(16f, cap = StrokeCap.Round)
@@ -1359,7 +1504,7 @@ private fun ScoreGauge(fraction: Float, color: Color) {
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("${(fraction * 100).roundToInt()}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black, color = color)
-            Text("OVERALL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -1396,10 +1541,20 @@ private fun ScoreCopy(
 }
 
 @Composable
-private fun MotionPanel(frames: List<AnimationFrame>, bitmap: android.graphics.Bitmap?, pose: FramePose?) {
+private fun MotionPanel(
+    frames: List<AnimationFrame>,
+    bitmap: android.graphics.Bitmap?,
+    pose: FramePose?,
+    tracking: AthleteTrackingInfo
+) {
     if (frames.isEmpty() && (bitmap == null || pose == null)) return
+    val trackingLabel = if (tracking.mode == AthleteTrackingMode.BATTER_LOCKED) {
+        "BATTER LOCK · TRACK QUALITY ${(tracking.matchScore * 100).roundToInt()}/100"
+    } else {
+        "ON-DEVICE TRACKED"
+    }
     Column {
-        SectionHeading("Movement replay", "02", "AI TRACKED")
+        SectionHeading("Movement replay", "02", trackingLabel)
         Spacer(Modifier.height(12.dp))
         Card(
             shape = PageShape,
@@ -1424,7 +1579,12 @@ private fun MotionPanel(frames: List<AnimationFrame>, bitmap: android.graphics.B
                         Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(6.dp).background(SkyCyan, CircleShape))
                             Spacer(Modifier.width(6.dp))
-                            Text("POSE MAP", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (tracking.mode == AthleteTrackingMode.BATTER_LOCKED) "BATTER POSE" else "POSE MAP",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -1566,7 +1726,8 @@ private fun TimelinePanel(
             EmptyTimeline(sport)
         } else {
             val latest = sorted.last()
-            val previous = sorted.getOrNull(sorted.lastIndex - 1)
+            val comparable = sorted.filter { it.analysisProfile == latest.analysisProfile }
+            val previous = comparable.getOrNull(comparable.lastIndex - 1)
             PerformanceMetricsSection(
                 sport = sport,
                 current = latest.metrics,
@@ -1575,13 +1736,16 @@ private fun TimelinePanel(
                 onMetricSelected = onMetricSelected
             )
             Spacer(Modifier.height(16.dp))
-            TimelineSummary(sorted, selectedMetric)
+            TimelineSummary(comparable, selectedMetric)
             Spacer(Modifier.height(12.dp))
-            ProgressChartPremium(sorted, selectedMetric, onOpenSession)
+            ProgressChartPremium(comparable, selectedMetric, onOpenSession)
             Spacer(Modifier.height(12.dp))
-            sorted.asReversed().take(8).forEachIndexed { index, entry ->
+            val newestFirst = sorted.asReversed()
+            newestFirst.forEachIndexed { index, entry ->
                 val chronologicalIndex = sorted.indexOf(entry)
-                val previous = sorted.getOrNull(chronologicalIndex - 1)
+                val previous = sorted.take(chronologicalIndex).lastOrNull {
+                    it.analysisProfile == entry.analysisProfile
+                }
                 SessionRow(
                     entry = entry,
                     previous = previous,
@@ -1590,7 +1754,7 @@ private fun TimelinePanel(
                     onOpen = { onOpenSession(entry.id) },
                     onDelete = { deleteTarget = entry }
                 )
-                if (index != sorted.asReversed().take(8).lastIndex) Spacer(Modifier.height(8.dp))
+                if (index != newestFirst.lastIndex) Spacer(Modifier.height(8.dp))
             }
         }
     }
@@ -1715,14 +1879,18 @@ private fun ProgressChartPremium(
                 }
             }
             if (plotted.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { onOpenSession(plotted.first().first.id) }) {
-                        Text(formatSessionDate(plotted.first().first.filmedAtMillis), style = MaterialTheme.typography.labelSmall)
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (plotted.size > 1) {
-                        TextButton(onClick = { onOpenSession(plotted.last().first.id) }) {
-                            Text(formatSessionDate(plotted.last().first.filmedAtMillis), style = MaterialTheme.typography.labelSmall)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    plotted.forEach { (entry, value) ->
+                        TextButton(onClick = { onOpenSession(entry.id) }) {
+                            Text(
+                                "${formatSessionDate(entry.filmedAtMillis)} · $value",
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1
+                            )
                         }
                     }
                 }
@@ -1772,7 +1940,14 @@ private fun SessionRow(
                     }
                 }
                 Text(
-                    when { value == null -> "Metric not saved"; delta == null -> "Baseline session"; delta > 0 -> "↑ $delta points from prior"; delta < 0 -> "↓ ${-delta} points from prior"; else -> "No change from prior" },
+                    when {
+                        value == null && selectedMetric == null && entry.isPartialMetricScore -> "Partial measured areas — excluded from overall trend"
+                        value == null -> "Metric not saved"
+                        delta == null -> "Baseline session"
+                        delta > 0 -> "↑ $delta points from prior"
+                        delta < 0 -> "↓ ${-delta} points from prior"
+                        else -> "No change from prior"
+                    },
                     style = MaterialTheme.typography.labelMedium,
                     color = deltaColor,
                     fontWeight = FontWeight.SemiBold
@@ -1787,7 +1962,11 @@ private fun SessionRow(
 }
 
 private fun sessionValue(entry: SessionEntry, selectedMetric: String?): Int? =
-    if (selectedMetric == null) entry.score else entry.metrics[selectedMetric]
+    if (selectedMetric == null) {
+        entry.score.takeUnless { entry.isPartialMetricScore }
+    } else {
+        entry.metrics[selectedMetric]
+    }
 
 @Composable
 private fun ErrorExperience(message: String, onRetry: () -> Unit) {

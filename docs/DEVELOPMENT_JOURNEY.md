@@ -36,6 +36,8 @@ It proved the flow, but it looked like a basic Android prototype and had no long
 
 This kept the expensive pose work local and made the feedback pipeline independent from the UI.
 
+That original single-person path remains appropriate for pitching and basketball shooting. Version 2.2 later added a separate multi-person batting path after game-angle footage showed that a one-person detector could return the catcher or umpire instead of the batter.
+
 ## 3. Adding explainable biomechanics feedback
 
 `TechniqueAnalyzer` added sport-specific local coaching rules for:
@@ -186,11 +188,11 @@ Both Gemini and the offline rules path now produce a concise 3–4 sentence over
 
 ## 17. Creating real editable highlights
 
-Pose timing now identifies peak action, best form, and sport-specific release/contact moments. Android's local media APIs cut those ranges into private MP4 files. Tapping a highlight opens real video playback, and the in-app editor can adjust the start/end boundaries and replace the saved cut.
+Pose timing now identifies peak action, best form, release moments, and a batting contact-zone estimate based on body motion. Android's local media APIs cut those ranges into private MP4 files. Tapping a highlight opens real video playback, and the in-app editor can adjust the start/end boundaries and replace the saved cut.
 
 ## 18. Making highlights focused and dependable
 
-Real-device testing exposed two weaknesses in the first highlight pass: a normal tap used the generated file while the editor used the more reliable source URI, and keyframe-based remuxing could include video from well before the selected action. Playback now opens the exact source range immediately and falls back to the private clip only when needed. Media3 Transformer creates precise replacement clips, while a smoothed, body-normalized selector chooses one complete sport-specific action using release-arm speed and extension for pitching, hand speed and torso rotation for batting, or upward release, elbow extension, and leg drive for basketball shooting. Static poses and isolated one-frame tracking jumps are rejected.
+Real-device testing exposed two weaknesses in the first highlight pass: a normal tap used the generated file while the editor used the more reliable source URI, and keyframe-based remuxing could include video from well before the selected action. Playback now opens the exact source range immediately and falls back to the private clip only when needed. Media3 Transformer creates precise replacement clips, while a smoothed, body-normalized selector chooses one complete sport-specific action using release-arm speed and extension for pitching, peak hand speed and torso rotation for batting, or upward release, elbow extension, and leg drive for basketball shooting. Static poses and isolated one-frame tracking jumps are rejected.
 
 ## 19. Removing the first-open black video
 
@@ -200,14 +202,32 @@ The platform `VideoView` could prepare a fast local clip before its callback and
 
 The exact personal/local source was preserved as the `local-v1.3` Git tag. The public 2.0 build removed the Gradle and `BuildConfig` secret path completely, added a fourth Settings destination, and made every APK keyless by default. Each device owner can add, test, replace, or remove their own Gemini key. The saved value is AES-GCM encrypted with Android Keystore key material and excluded from backups and device transfer; SportsAI continues with offline coaching when no key is present or Gemini is unavailable.
 
+## 21. Locking onto the batter offline
+
+Game-angle batting clips exposed a deeper problem than prompt quality: ML Kit's single-pose result could follow the most prominent catcher or umpire. Cloud coaching could not repair a skeleton and movement timeline built from the wrong person.
+
+Version 2.2 introduced an offline batting-specific path:
+
+- The bundled MediaPipe Pose Landmarker Full model detects up to four people at each sampled frame.
+- A persistent tracker associates candidates through time using torso position and scale, landmark shape, recent velocity, and short-gap continuity.
+- Batter evidence combines track coverage, reliable joint completeness, two-hand proximity, hand height, stance, and coordinated wrist movement relative to the torso.
+- Swing motion is measured in torso-aligned coordinates so camera translation, zoom, in-plane roll, and an official stepping do not automatically look like bat-hand movement. A transverse gate combines screen and relative-depth motion, rejecting a vertical catcher rise while keeping a front-angle swing eligible.
+- Replay and highlight timing use the strongest direction-consistent three-interval hand-motion burst instead of a single fastest pose interval.
+- The largest or most central person receives no automatic preference.
+- If the best track is incomplete, lacks swing evidence, or is too close to the runner-up, SportsAI abstains. It creates no score, highlight, or saved batting result and instead explains how to film a clearer clip.
+
+Once Batter Lock succeeds, the selected track supplies the same offline coaching, sport metrics, skeleton replay, local highlight selector, editor, and timeline features that previously depended on a single detected pose. Sensitive key, history, and generated-highlight paths are excluded from Android backup and device transfer. Gemini remains optional. This is still pose analysis rather than equipment tracking: it does not detect the bat or ball, prove contact or gaze, or measure radar speed, ball flight, launch angle, or physical distance.
+
 ## Final architecture snapshot
 
 ```text
 Photo Picker
-    -> PoseAnalyzer (ML Kit, local)
-    -> TechniqueAnalyzer (local fallback)
+    -> PoseAnalyzer
+       -> batting: MediaPipe multi-pose -> BatterPoseSelector -> accept or abstain
+       -> pitching/shooting: ML Kit single pose
+    -> TechniqueAnalyzer (local, accepted athlete track only)
     -> GeminiCoach (optional selected-frame analysis)
-    -> HighlightExtractor (AI moment selection)
+    -> HighlightExtractor (local sport-aware moment selection)
     -> VideoClipExporter (private MP4 cut/edit)
     -> AnalysisViewModel
     -> PremiumSportsDashboard (Home / Upload / Timeline / Settings)
@@ -222,6 +242,8 @@ Photo Picker
 - Add automated Compose UI and screenshot tests
 - Add camera capture and clip trimming
 - Add more movements only with dedicated mechanics and test data
+- Validate Batter Lock across a larger, consented set of camera angles, uniforms, lighting, body types, and levels of play
+- Add dedicated bat/ball detection only if future features need equipment, contact, or flight measurements
 - Complete accessibility review with TalkBack and large font settings
 
 SportsAI should continue to present itself as an educational coaching aid—not a medical assessment or a substitute for in-person coaching.

@@ -32,7 +32,8 @@ class GeminiCoachTest {
     fun battingPromptRequiresVisibleBatterAndFrameEvidence() {
         val prompt = GeminiCoach { "test" }.promptFor(Sport.BASEBALL_BAT)
 
-        assertTrue(prompt.contains("Verify the batter and bat are visibly present"))
+        assertTrue(prompt.contains("body-box target is visibly the batter"))
+        assertTrue(prompt.contains("do not choose the largest bystander"))
         assertTrue(prompt.contains("Every strength and issue must"))
         assertTrue(prompt.contains("contact-zone frame"))
         assertTrue(prompt.contains("set athleteVisible=false"))

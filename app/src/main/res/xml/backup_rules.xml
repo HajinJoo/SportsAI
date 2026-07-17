@@ -2,4 +2,7 @@
 <full-backup-content>
     <!-- Ciphertext is device-bound to Android Keystore and must never leave the device. -->
     <exclude domain="sharedpref" path="gemini_secure_settings.xml" />
+    <!-- Coaching history may include source URIs and reports; highlights are copied video. -->
+    <exclude domain="file" path="session_history.json" />
+    <exclude domain="file" path="highlights/" />
 </full-backup-content>

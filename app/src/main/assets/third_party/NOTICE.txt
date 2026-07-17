@@ -1,0 +1,20 @@
+SportsAI third-party notices
+============================
+
+MediaPipe Tasks Vision 0.10.35
+Project: https://github.com/google-ai-edge/mediapipe
+Copyright the MediaPipe authors / Google LLC and contributors.
+Licensed under the Apache License, Version 2.0.
+
+MediaPipe Pose Landmarker Full, float16, version 1
+Source: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task
+Model card: https://storage.googleapis.com/mediapipe-assets/Model%20Card%20BlazePose%20GHUM%203D.pdf
+SHA-256: 4EAA5EB7A98365221087693FCC286334CF0858E2EB6E15B506AA4A7ECDCEC4AD
+Licensed under the Apache License, Version 2.0.
+
+The complete Apache License 2.0 text is included in the adjacent
+APACHE-2.0.txt asset. Source-repository notices, including connected-test
+media attribution, are available in THIRD_PARTY_NOTICES.md.
+
+Google and MediaPipe names and trademarks belong to their respective owners.
+No endorsement of SportsAI is implied.

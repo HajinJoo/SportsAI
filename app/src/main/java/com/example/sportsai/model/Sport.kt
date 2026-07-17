@@ -10,7 +10,7 @@ enum class Sport(val displayName: String, val emoji: String, val filmingTip: Str
     BASEBALL_BAT(
         "Batting",
         "🥎",
-        "Film from the side (or slightly behind) so your full swing and hips are visible."
+        "Use one clip up to 30 seconds. Film from the side so the batter's full body and both hands stay visible."
     ),
     BASKETBALL_SHOT(
         "Basketball shot",

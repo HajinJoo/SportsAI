@@ -22,6 +22,19 @@ data class TechniqueReport(
     /** A 3–4 sentence AI-generated skill overview. */
     val aiOverview: String = "",
     /** AI-picked highlight clips from the analyzed video. */
-    val highlights: List<HighlightClip> = emptyList()
+    val highlights: List<HighlightClip> = emptyList(),
+    /** Stable scoring/prompt profile used to prevent incompatible progress comparisons. */
+    val analysisProfile: String = AnalysisProfiles.LEGACY_UNKNOWN
 )
+
+object AnalysisProfiles {
+    const val LEGACY_UNKNOWN = "legacy-unknown-v1"
+    const val GEMINI_EVIDENCE_V2 = "gemini-3.5-flash-evidence-v2"
+
+    fun offline(sport: Sport): String = when (sport) {
+        Sport.BASEBALL_BAT -> "offline-batter-lock-v2"
+        Sport.BASEBALL_PITCH -> "offline-pitch-v1"
+        Sport.BASKETBALL_SHOT -> "offline-basketball-v1"
+    }
+}
 

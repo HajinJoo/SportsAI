@@ -13,6 +13,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import com.example.sportsai.model.HighlightClip
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -58,7 +59,7 @@ class VideoClipExporter(context: Context) {
                 clip.copy(videoPath = target.absolutePath)
             }
         } catch (error: Exception) {
-            withContext(Dispatchers.IO) { temporary.delete() }
+            withContext(NonCancellable + Dispatchers.IO) { temporary.delete() }
             throw error
         }
     }

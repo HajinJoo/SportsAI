@@ -34,9 +34,16 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
-      - name: Lint
-        run: ./gradlew lintDebug --stacktrace
+      - name: Lint release
+        run: ./gradlew lintRelease --stacktrace
 
-      - name: Assemble public bring-your-own-key debug build
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Assemble public bring-your-own-key builds
+        run: ./gradlew assembleRelease assembleDebugAndroidTest --stacktrace
+
+      - name: Reject embedded Google API keys
+        run: |
+          if git grep -I -n -E 'AIza[0-9A-Za-z_-]{30,}' -- .; then
+            echo 'A Google API key-shaped value was found in tracked source.' >&2
+            exit 1
+          fi
 

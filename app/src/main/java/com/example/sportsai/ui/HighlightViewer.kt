@@ -79,7 +79,7 @@ import java.io.File
 
 private val ViewerShape = RoundedCornerShape(28.dp)
 
-/** Real AI-cut MP4 highlights. Tapping a video opens playback and boundary editing. */
+/** AI-selected source ranges and exported MP4 highlights with boundary editing. */
 @Composable
 fun HighlightsSection(
     highlights: List<HighlightClip>,
@@ -95,6 +95,8 @@ fun HighlightsSection(
     if (highlights.isEmpty()) return
     var viewingClip by remember { mutableStateOf<HighlightClip?>(null) }
     var startInEditor by remember { mutableStateOf(false) }
+    val cutCount = highlights.count { it.videoPath.isNotBlank() }
+    val previewCount = highlights.size - cutCount
 
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -106,14 +108,22 @@ fun HighlightsSection(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                "${highlights.size} CUT ${if (highlights.size == 1) "CLIP" else "CLIPS"}",
+                if (previewCount == 0) {
+                    "$cutCount CUT ${if (cutCount == 1) "CLIP" else "CLIPS"}"
+                } else {
+                    "$cutCount CUT · $previewCount SOURCE ${if (previewCount == 1) "PREVIEW" else "PREVIEWS"}"
+                },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            "SportsAI found the strongest complete action and cut it into a focused video. Tap it to watch immediately or adjust the start and end.",
+            if (previewCount == 0) {
+                "SportsAI found the strongest complete action and cut it into a focused video. Tap it to watch immediately or adjust the start and end."
+            } else {
+                "SportsAI found the strongest complete action. A source preview means the private MP4 cut was not saved yet; open Edit and save the selected range again."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -229,7 +239,11 @@ private fun HighlightCard(
                         contentColor = Color.White
                     ) {
                         Text(
-                            if (clip.editedByUser) "AI PICK · EDITED" else "AI PICK",
+                            when {
+                                clip.editedByUser -> "AI PICK · EDITED"
+                                clip.videoPath.isBlank() -> "AI PICK · SOURCE"
+                                else -> "AI PICK"
+                            },
                             Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White,
@@ -244,7 +258,8 @@ private fun HighlightCard(
                     Column(Modifier.weight(1f)) {
                         Text(clip.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Text(
-                            "${formatMs(clip.startMs)} – ${formatMs(clip.endMs)} · score ${clip.score}",
+                            "${formatMs(clip.startMs)} – ${formatMs(clip.endMs)} · score ${clip.score} · " +
+                                if (clip.videoPath.isBlank()) "source preview" else "saved cut",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

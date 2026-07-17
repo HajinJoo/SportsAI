@@ -13,6 +13,7 @@ captures/
 
 # Build and signing artifacts
 *.apk
+*.idsig
 *.aab
 *.apks
 *.jks

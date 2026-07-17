@@ -64,7 +64,7 @@ class CoachingFrameExtractor(private val context: Context) {
     private fun scalePose(frame: FramePose, factor: Float): FramePose =
         if (factor >= 1f) frame else frame.copy(
             landmarks = frame.landmarks.map { point ->
-                point.copy(x = point.x * factor, y = point.y * factor)
+                point.copy(x = point.x * factor, y = point.y * factor, z = point.z * factor)
             }
         )
 

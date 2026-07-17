@@ -206,3 +206,63 @@ Repository: `https://github.com/HajinJoo/SportsAI`
 - Phone APK: `/sdcard/Download/SportsAI-v2.1.apk` (121,952,898 bytes).
 - PC and phone SHA-256: `43468AE1B78EE114D35300AE35CEDB2D23A74614F300DB4AFDDC189FEE7128E9`.
 - Signing-certificate SHA-256: `97:7C:68:3B:51:AE:C2:4F:AE:E7:1B:E3:D2:6F:DE:13:B1:9A:E6:C7:09:9F:7C:EF:41:38:F6:99:17:36:E8:D9`.
+
+## 2026-07-16 — Version 2.2 offline Batter Lock
+
+### Problem addressed
+
+- Game-angle batting clips showed a structural limitation in the former single-pose path: the skeleton could follow a prominent catcher or umpire instead of the batter.
+- Prompt changes alone could not correct feedback built from the wrong athlete timeline.
+- The new implementation uses a neural multi-pose detector plus temporal batter selection. It is not described as a trained baseball-role or identity classifier.
+
+### Offline batting pipeline
+
+- Added MediaPipe Tasks Vision 0.10.35 and bundled the Pose Landmarker Full float16 model so batting pose inference works without a Gemini key or network request.
+- Configured MediaPipe video mode on CPU for up to four 33-landmark poses per sampled frame, with 0.45 detection, presence, and tracking thresholds.
+- Raised batting sampling to at least 10 frames per second so a short swing is less likely to fall between samples; pitching and basketball retain the ML Kit single-person path.
+- Added persistent track association using torso location, scale, recent velocity, landmark shape, and short-gap continuity instead of selecting the largest or most central person.
+- Scores candidate tracks using temporal coverage, reliable joint completeness, detector confidence, two-hand proximity, batting hand height, stance, and coordinated wrist motion.
+- Measures wrist movement in torso-aligned coordinates so camera translation, zoom, in-plane roll, an official stepping, or a catcher standing is less likely to be treated as swing evidence.
+- Requires a direction-consistent transverse burst across image-horizontal or relative model-depth motion. Synthetic regressions reject a catcher rising with both hands together and accept a front-angle swing dominated by depth travel.
+- Requires a clear winning margin in multi-person scenes. Incomplete, static, weak, or ambiguous tracks produce `BATTER_NOT_CONFIDENT` rather than a guessed athlete.
+- Keeps only pose coordinates during the full scan, then reopens at most 24 frames within 1.5 seconds of the strongest coordinated three-interval swing burst for replay.
+- Limits batting input to 30 seconds and gives explicit one-swing filming guidance.
+
+### Downstream behavior
+
+- An accepted Batter Lock supplies one continuous pose timeline to offline technique rules, sport metrics, the 3–4 sentence skill overview, skeleton replay, highlight selection, optional Gemini frame extraction, and the editor.
+- A failed Batter Lock shows retry guidance and creates no score, scored technique findings, highlight, filming-date prompt, or saved history entry.
+- Existing pitching and basketball behavior remains on the ML Kit path.
+- Updated local feedback and labels to keep measurement claims honest: pose landmarks do not detect or measure the bat, ball, contact, eye gaze, radar speed, launch angle, ball flight, or physical distance.
+- Bat Speed Potential and Pitch Speed Potential remain pose-based movement scores. Ball Tracking remains a head-stability proxy, not proof of gaze or ball flight.
+- Bumped the Android app to version 2.2 (`versionCode` 7).
+
+### Regression coverage completed during development
+
+- Unit scenarios cover a swinging batter beside a larger catcher and umpire, detection-order changes, one-hand false positives, static officials, no-swing clips, sparse detections, a short swing inside a longer setup, camera translation/zoom/roll, one-frame out-and-back jitter, brief occlusion, crossing tracks, source-coordinate scaling, and rotated metadata dimensions.
+- A connected-device still-image regression confirmed at the production 840-pixel input bound that the bundled model can return a batter and catcher as separate poses.
+- The attributed 9-second game-angle clip passed Batter Lock in 77.1 seconds on the Samsung SM-S721W and kept the selected torso inside the manually labeled batter region at the start, middle, and end.
+- The supplied-video test separately passed in 79.9 seconds and verified a capped replay plus a non-empty pose-timed highlight.
+- All five connected-device test methods passed across the base suite and explicit real-video invocations; 45 JVM unit tests plus debug application and Android-test APK assembly also passed.
+
+### Model provenance
+
+- Asset: `app/src/main/assets/pose_landmarker_full.task`
+- Source: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task`
+- SHA-256: `4EAA5EB7A98365221087693FCC286334CF0858E2EB6E15B506AA4A7ECDCEC4AD`
+- License: Apache License 2.0
+- Complete source, model, and connected-test asset notices are recorded in `THIRD_PARTY_NOTICES.md` and bundled under `app/src/main/assets/third_party/`.
+
+### Final release handoff
+
+- A clean `testDebugUnitTest`, `lintRelease`, `assembleRelease`, and `assembleDebugAndroidTest` gate passed with 104 tasks completed; 45 JVM tests passed.
+- Release lint completed with no blocking finding. The universal release includes `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64` native code.
+- Final PC APK: `F:\SportsAI\SportsAI-v2.2.apk` (178,769,967 bytes).
+- Final APK SHA-256: `924EAD0C1067ADE6D54124C6E58F064FBF06CCA9D20DE15D21CF35D624C408AE`.
+- The packaged model is 9,398,198 bytes and matches SHA-256 `4EAA5EB7A98365221087693FCC286334CF0858E2EB6E15B506AA4A7ECDCEC4AD`; required third-party notices are present.
+- Manifest verification: package `com.example.sportsai`, version 2.2 (`versionCode` 7), minimum API 29, target API 36, and no debuggable attribute.
+- Signature verification passed with one v3 signer and release-certificate SHA-256 `97:7C:68:3B:51:AE:C2:4F:AE:E7:1B:E3:D2:6F:DE:13:B1:9A:E6:C7:09:9F:7C:EF:41:38:F6:99:17:36:E8:D9`.
+- Credential-pattern scans found no packaged or workspace developer Gemini credential.
+- The exact final release updated in place on Samsung SM-S721W, preserved the original install timestamp and existing app data, cold-launched in 454 ms, remained running, and produced no app crash or ANR marker.
+- Phone APK: `/sdcard/Download/SportsAI-v2.2.apk`; its SHA-256 matches the PC artifact exactly.
+- Public release: `https://github.com/HajinJoo/SportsAI/releases/tag/v2.2` with `SportsAI-v2.2.apk` and `SHA256SUMS-v2.2.txt` as the only release assets.

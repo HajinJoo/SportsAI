@@ -3,6 +3,9 @@ package com.example.sportsai
 import com.example.sportsai.data.HighlightExtractor
 import com.example.sportsai.data.TechniqueAnalyzer
 import com.example.sportsai.model.AnalysisResult
+import com.example.sportsai.model.AnalysisProfiles
+import com.example.sportsai.model.AthleteTrackingInfo
+import com.example.sportsai.model.AthleteTrackingMode
 import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.FramePose
@@ -22,7 +25,15 @@ class SportProgressTest {
         val result = trackedResult()
 
         Sport.entries.forEach { sport ->
-            val report = TechniqueAnalyzer().analyze(result, sport)
+            val verifiedResult = if (sport == Sport.BASEBALL_BAT) {
+                result.copy(
+                    athleteTracking = AthleteTrackingInfo(
+                        mode = AthleteTrackingMode.BATTER_LOCKED,
+                        trackedFrames = result.timeline.size
+                    )
+                )
+            } else result
+            val report = TechniqueAnalyzer().analyze(verifiedResult, sport)
             assertEquals(sport.metrics.map { it.name }.toSet(), report.metricScores.keys)
             assertTrue(report.metricScores.values.all { it in 0..100 })
             val sentences = report.aiOverview.split('.').map(String::trim).filter(String::isNotEmpty)
@@ -44,7 +55,7 @@ class SportProgressTest {
     fun highlightExtractorReturnsOneSportSpecificActionInsteadOfGenericClips() {
         val expectedLabels = mapOf(
             Sport.BASEBALL_PITCH to "Best pitch · release",
-            Sport.BASEBALL_BAT to "Best swing · contact",
+            Sport.BASEBALL_BAT to "Best swing · peak hand speed",
             Sport.BASKETBALL_SHOT to "Best shot · release"
         )
 
@@ -81,6 +92,113 @@ class SportProgressTest {
     }
 
     @Test
+    fun ambiguousBattingTrackIsNotScoredAsTheCatcherOrUmpire() {
+        val result = AnalysisResult(
+            framesSampled = 12,
+            framesWithPose = 0,
+            timeline = emptyList(),
+            durationMs = 2_200L,
+            athleteTracking = AthleteTrackingInfo(
+                mode = AthleteTrackingMode.BATTER_NOT_CONFIDENT,
+                matchScore = 0.31f,
+                maxPeopleDetected = 3,
+                trackedFrames = 0
+            )
+        )
+
+        val report = TechniqueAnalyzer().analyze(result, Sport.BASEBALL_BAT)
+
+        assertEquals(0, report.overallScore)
+        assertTrue(report.metricScores.isEmpty())
+        assertTrue(report.summary.contains("did not score", ignoreCase = true))
+        assertTrue(report.findings.any { it.message.contains("3 people") })
+    }
+
+    @Test
+    fun uncertainBattingModeCannotBeScoredEvenWhenCandidatePosesArePresent() {
+        val base = trackedResult()
+        val result = base.copy(
+            athleteTracking = AthleteTrackingInfo(
+                mode = AthleteTrackingMode.BATTER_NOT_CONFIDENT,
+                matchScore = 0.49f,
+                maxPeopleDetected = 3,
+                trackedFrames = base.timeline.size
+            )
+        )
+
+        val report = TechniqueAnalyzer().analyze(result, Sport.BASEBALL_BAT)
+
+        assertEquals(0, report.overallScore)
+        assertTrue(report.metricScores.isEmpty())
+        assertTrue(report.summary.contains("did not score", ignoreCase = true))
+    }
+
+    @Test
+    fun unverifiedSinglePersonBattingModeCannotBypassBatterLock() {
+        val result = trackedResult().copy(
+            athleteTracking = AthleteTrackingInfo(
+                mode = AthleteTrackingMode.SINGLE_PERSON,
+                trackedFrames = trackedResult().timeline.size
+            )
+        )
+
+        val report = TechniqueAnalyzer().analyze(result, Sport.BASEBALL_BAT)
+
+        assertEquals(0, report.overallScore)
+        assertTrue(report.metricScores.isEmpty())
+        assertTrue(report.summary.contains("Batter Lock"))
+    }
+
+    @Test
+    fun missingBattingJointsRemainUnmeasuredInsteadOfBecomingTechniqueFaults() {
+        val base = trackedResult()
+        val upperBodyOnly = base.timeline.map { frame ->
+            frame.copy(
+                landmarks = frame.landmarks.filterNot { point ->
+                    point.type in setOf(13, 14, 25, 26, 27, 28)
+                }
+            )
+        }
+        val result = base.copy(
+            timeline = upperBodyOnly,
+            athleteTracking = AthleteTrackingInfo(
+                mode = AthleteTrackingMode.BATTER_LOCKED,
+                matchScore = 0.82f,
+                maxPeopleDetected = 2,
+                trackedFrames = upperBodyOnly.size
+            )
+        )
+
+        val report = TechniqueAnalyzer().analyze(result, Sport.BASEBALL_BAT)
+
+        assertFalse(report.metricScores.containsKey("Swing Extension"))
+        assertFalse(report.metricScores.containsKey("Lower-Body Load"))
+        assertTrue(report.findings.any { it.area == "Visibility" })
+        assertFalse(report.findings.any { it.message.contains("~0°") })
+        assertFalse(report.findings.any { it.message.contains("standing tall", ignoreCase = true) })
+    }
+
+    @Test
+    fun lockedBattingTrackExplainsWhoWasMeasured() {
+        val base = trackedResult()
+        val result = base.copy(
+            athleteTracking = AthleteTrackingInfo(
+                mode = AthleteTrackingMode.BATTER_LOCKED,
+                matchScore = 0.88f,
+                maxPeopleDetected = 3,
+                trackedFrames = base.timeline.size
+            )
+        )
+
+        val report = TechniqueAnalyzer().analyze(result, Sport.BASEBALL_BAT)
+
+        assertTrue(report.summary.startsWith("Batter Lock"))
+        assertTrue(report.findings.any { finding ->
+            finding.area == "Batter Lock" && finding.message.contains("2 other people")
+        })
+    }
+
+    @Test
     fun savedSessionRecreatesTheFullHistoricalReport() {
         val finding = Finding(FindingType.GOOD, "Balance", "Stable through the finish.")
         val entry = SessionEntry(
@@ -101,6 +219,15 @@ class SportProgressTest {
         assertEquals(entry.metrics, report.metricScores)
         assertEquals(listOf(finding), report.findings)
         assertEquals(entry.aiOverview, report.aiOverview)
+        assertEquals(AnalysisProfiles.LEGACY_UNKNOWN, report.analysisProfile)
+    }
+
+    @Test
+    fun offlineReportsCarryAStableProfileForCompatibleProgressComparisons() {
+        Sport.entries.forEach { sport ->
+            val report = TechniqueAnalyzer().analyze(trackedResult(), sport)
+            assertEquals(AnalysisProfiles.offline(sport), report.analysisProfile)
+        }
     }
 
     private fun trackedResult(): AnalysisResult {
@@ -171,6 +298,13 @@ class SportProgressTest {
         type = type,
         x = x,
         y = y,
-        inFrameLikelihood = 0.99f
+        inFrameLikelihood = 0.99f,
+        z = when (type) {
+            11 -> -20f
+            12 -> 20f
+            23 -> -8f
+            24 -> 8f
+            else -> 0f
+        }
     )
 }

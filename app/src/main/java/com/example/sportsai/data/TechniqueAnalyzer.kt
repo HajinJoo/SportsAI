@@ -1,6 +1,8 @@
 package com.example.sportsai.data
 
 import com.example.sportsai.model.AnalysisResult
+import com.example.sportsai.model.AnalysisProfiles
+import com.example.sportsai.model.AthleteTrackingMode
 import com.example.sportsai.model.Finding
 import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.FramePose
@@ -42,18 +44,51 @@ class TechniqueAnalyzer {
     }
 
     fun analyze(result: AnalysisResult, sport: Sport = Sport.BASEBALL_PITCH): TechniqueReport {
-        if (result.timeline.size < 3) {
-            return notEnoughData(result, sport)
-        }
-        return when (sport) {
+        val report = if (sport == Sport.BASEBALL_BAT &&
+            result.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED
+        ) {
+            notEnoughData(result, sport)
+        } else if (result.timeline.size < 3) {
+            notEnoughData(result, sport)
+        } else when (sport) {
             Sport.BASEBALL_PITCH -> analyzeBaseball(result)
             Sport.BASEBALL_BAT -> analyzeBatting(result)
             Sport.BASKETBALL_SHOT -> analyzeBasketball(result)
         }
+        return report.copy(analysisProfile = AnalysisProfiles.offline(sport))
     }
 
-    private fun notEnoughData(result: AnalysisResult, sport: Sport): TechniqueReport =
-        TechniqueReport(
+    private fun notEnoughData(result: AnalysisResult, sport: Sport): TechniqueReport {
+        if (sport == Sport.BASEBALL_BAT &&
+            result.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED
+        ) {
+            val people = result.athleteTracking.maxPeopleDetected
+            val detail = if (people > 1) {
+                "SportsAI found up to $people people, but no single track had enough two-hand swing evidence to identify the batter safely."
+            } else {
+                "SportsAI could not follow one visible batter through enough of the swing to score it safely."
+            }
+            return TechniqueReport(
+                sport = sport.displayName,
+                overallScore = 0,
+                summary = "Batter Lock was uncertain, so SportsAI did not score the catcher or umpire by mistake.",
+                findings = listOf(
+                    Finding(FindingType.TIP, "Batter Lock", detail),
+                    Finding(
+                        FindingType.TIP,
+                        "Filming",
+                        "Keep the batter's full body and both hands visible, use a side angle, and trim the clip to one complete swing."
+                    )
+                ),
+                detectionRate = result.detectionRate,
+                metricScores = emptyMap(),
+                aiOverview = "Batter Lock could not confidently separate one complete batter track, so no technique score was created. " +
+                    "This prevents catcher or umpire movement from becoming your result. " +
+                    "Record one complete swing with the batter's hands, hips, knees, and feet visible. " +
+                    "A clearer clip will unlock the offline mechanics and progress measurements."
+            )
+        }
+        return TechniqueReport(
             sport = sport.displayName,
             overallScore = 0,
             summary = "Not enough of your body was visible to analyze. " +
@@ -68,6 +103,7 @@ class TechniqueAnalyzer {
                 "Record the full movement from the recommended angle with brighter, even lighting. " +
                 "A clearer clip will let SportsAI identify your strongest skill and the next area to improve."
         )
+    }
 
     private fun analyzeBaseball(result: AnalysisResult): TechniqueReport {
         val findings = mutableListOf<Finding>()
@@ -237,125 +273,204 @@ class TechniqueAnalyzer {
     private fun analyzeBatting(result: AnalysisResult): TechniqueReport {
         val findings = mutableListOf<Finding>()
         val sport = Sport.BASEBALL_BAT.displayName
-        var score = 60
+        val requiredSamples = maxOf(3, (result.timeline.size * 0.35).roundToInt())
+        val missingAreas = mutableListOf<String>()
+        val metricScores = linkedMapOf<String, Int>()
+        val weightedScores = mutableListOf<Pair<Int, Int>>()
 
-        // 1. Hip/trunk rotation — a good swing rotates the core through contact.
-        val trunkTilts = result.timeline.mapNotNull { trunkTilt(it) }
-        val trunkRange = if (trunkTilts.size >= 2) trunkTilts.max() - trunkTilts.min() else 0.0
-
-        // 2. Head stability — keep your eyes on the ball; the head should stay quiet.
-        val headYs = result.timeline.mapNotNull { headY(it) }
-        val headDrift = if (headYs.size >= 2) headYs.max() - headYs.min() else 0f
-
-        // 3. Lead-arm extension through contact (proxy: peak elbow extension).
-        val armExtension = result.timeline.mapNotNull { throwingElbowAngle(it) }.maxOrNull() ?: 0.0
-
-        // 4. Lower-body load — some knee bend to load and drive.
-        val kneeFlexes = result.timeline.mapNotNull { shootingKneeFlexion(it) }
-        val maxKneeFlex = kneeFlexes.maxOrNull() ?: 0.0
-
-        // --- Rotation ---
-        if (trunkRange >= 20.0) {
+        if (result.athleteTracking.mode == AthleteTrackingMode.BATTER_LOCKED) {
+            val trackQuality = (result.athleteTracking.matchScore * 100).roundToInt()
+            val otherPeople = (result.athleteTracking.maxPeopleDetected - 1).coerceAtLeast(0)
             findings += Finding(
-                FindingType.GOOD, "Rotation",
-                "Strong hip and trunk rotation through the swing — that's where bat speed and power come from."
+                FindingType.GOOD,
+                "Batter Lock",
+                if (otherPeople > 0) {
+                    "Followed one continuous swing-like batter across ${result.timeline.size} frames " +
+                        "and separated it from up to $otherPeople other people " +
+                        "(track quality $trackQuality/100)."
+                } else {
+                    "Used the continuous person track with the strongest swing pattern across " +
+                        "${result.timeline.size} frames (track quality $trackQuality/100)."
+                }
             )
-            score += 14
+        }
+
+        val separations = result.timeline.mapNotNull(::hipShoulderSeparation)
+        val separationRange = separations.takeIf { it.size >= requiredSamples }
+            ?.let { it.max() - it.min() }
+        if (separationRange != null) {
+            val rotationScore = when {
+                separationRange >= 18.0 -> 90
+                separationRange >= 12.0 -> 78
+                separationRange >= 7.0 -> 58
+                else -> 38
+            }
+            metricScores["Hip Rotation"] = rotationScore
+            weightedScores += rotationScore to 25
+            if (separationRange >= 12.0) {
+                findings += Finding(
+                    FindingType.GOOD, "Rotation sequence",
+                    "Clear shoulder-to-hip separation change through the swing — your lower and upper body are not moving as one rigid block."
+                )
+            } else {
+                findings += Finding(
+                    FindingType.ISSUE, "Rotation sequence",
+                    "Limited shoulder-to-hip separation change was detected, so the visible swing may be relying too much on the arms."
+                )
+                findings += Finding(
+                    FindingType.TIP, "Rotation sequence",
+                    "Start the swing by rotating your hips, then let your shoulders and hands follow."
+                )
+            }
         } else {
-            findings += Finding(
-                FindingType.ISSUE, "Rotation",
-                "Limited body rotation detected — the swing looks arm-driven, which saps power."
-            )
-            findings += Finding(
-                FindingType.TIP, "Rotation",
-                "Start the swing by rotating your hips, then let your shoulders and hands follow."
-            )
+            missingAreas += "rotation sequence"
         }
 
-        // --- Head / eyes ---
-        if (headDrift <= 0.18f) {
-            findings += Finding(
-                FindingType.GOOD, "Head & eyes",
-                "Your head stays quiet — that keeps your eyes on the ball for better contact."
-            )
-            score += 10
+        val headDrift = battingHeadDrift(result.timeline, requiredSamples)
+        if (headDrift != null) {
+            val headStabilityScore = when {
+                headDrift <= 0.20 -> 90
+                headDrift <= 0.28 -> 80
+                headDrift <= 0.42 -> 58
+                else -> 36
+            }
+            metricScores["Ball Tracking"] = headStabilityScore
+            weightedScores += headStabilityScore to 15
+            if (headDrift <= 0.28) {
+                findings += Finding(
+                    FindingType.GOOD, "Head stability",
+                    "Your head stays stable relative to your hips through the tracked swing. This is a stability proxy, not measured gaze or ball flight."
+                )
+            } else {
+                findings += Finding(
+                    FindingType.ISSUE, "Head stability",
+                    "Your head shifts noticeably relative to your hips during the swing, which can make the movement harder to repeat."
+                )
+                findings += Finding(
+                    FindingType.TIP, "Head stability",
+                    "Use slow dry swings and keep your head centered between your feet through the hitting zone."
+                )
+            }
         } else {
-            findings += Finding(
-                FindingType.ISSUE, "Head & eyes",
-                "Your head moves a lot during the swing, which pulls your eyes off the ball."
-            )
-            findings += Finding(
-                FindingType.TIP, "Head & eyes",
-                "Keep your head down and still; try to 'see' the bat meet the ball."
-            )
+            missingAreas += "head stability"
         }
 
-        // --- Arm extension ---
-        if (armExtension >= 150.0) {
-            findings += Finding(
-                FindingType.GOOD, "Extension",
-                "Good arm extension through the zone — you're driving the barrel out to the ball."
-            )
-            score += 10
+        val peakHandFrame = peakTwoHandSpeedFrame(result.timeline)
+        val armExtension = peakHandFrame?.let { frame ->
+            listOfNotNull(elbowAngle(frame, right = false), elbowAngle(frame, right = true)).maxOrNull()
+        }
+        if (armExtension != null) {
+            val extensionScore = when {
+                armExtension >= 155.0 -> 90
+                armExtension >= 145.0 -> 78
+                armExtension >= 125.0 -> 58
+                else -> 42
+            }
+            metricScores["Swing Extension"] = extensionScore
+            weightedScores += extensionScore to 20
+            if (armExtension >= 150.0) {
+                findings += Finding(
+                    FindingType.GOOD, "Extension",
+                    "Good extension in the most extended arm during the peak hand-speed window — your hands continue through the visible hitting zone."
+                )
+            } else {
+                findings += Finding(
+                    FindingType.ISSUE, "Extension",
+                    "The most extended arm remains bent in the peak hand-speed window (~${armExtension.toInt()}°), shortening the visible extension."
+                )
+                findings += Finding(
+                    FindingType.TIP, "Extension",
+                    "Drive both hands through the hitting zone, then allow natural extension into the finish."
+                )
+            }
         } else {
-            findings += Finding(
-                FindingType.ISSUE, "Extension",
-                "Your arms stay bent through contact (~${armExtension.toInt()}°), which shortens your reach and power."
-            )
-            findings += Finding(
-                FindingType.TIP, "Extension",
-                "Think about extending your hands through the ball toward the pitcher after contact."
-            )
+            missingAreas += "arm extension"
         }
 
-        // --- Lower body load ---
-        if (maxKneeFlex in 15.0..55.0) {
-            findings += Finding(
-                FindingType.GOOD, "Lower body",
-                "Nice knee bend to load your legs — a good base lets you drive through the ball."
-            )
-            score += 8
-        } else if (maxKneeFlex < 15.0) {
-            findings += Finding(
-                FindingType.ISSUE, "Lower body",
-                "Very little knee bend — you're standing tall and swinging with your upper body only."
-            )
-            findings += Finding(
-                FindingType.TIP, "Lower body",
-                "Get into an athletic stance with soft knees so you can load and explode."
-            )
+        val kneeFlexes = result.timeline.mapNotNull(::shootingKneeFlexion)
+        val maxKneeFlex = kneeFlexes.takeIf { it.size >= requiredSamples }?.maxOrNull()
+        if (maxKneeFlex != null) {
+            val lowerBodyScore = when {
+                maxKneeFlex in 15.0..55.0 -> 82
+                maxKneeFlex < 15.0 -> 35
+                else -> 55
+            }
+            metricScores["Lower-Body Load"] = lowerBodyScore
+            weightedScores += lowerBodyScore to 15
+            if (maxKneeFlex in 15.0..55.0) {
+                findings += Finding(
+                    FindingType.GOOD, "Lower body",
+                    "Visible knee bend creates an athletic loading base in the tracked swing."
+                )
+            } else if (maxKneeFlex < 15.0) {
+                findings += Finding(
+                    FindingType.ISSUE, "Lower body",
+                    "Very little knee bend was visible across enough tracked frames."
+                )
+                findings += Finding(
+                    FindingType.TIP, "Lower body",
+                    "Get into an athletic stance with soft knees so you can load and drive."
+                )
+            }
+        } else {
+            missingAreas += "lower-body load"
         }
 
+        val batSpeedPotential = battingHandSpeedScore(result.timeline)
+        if (batSpeedPotential != null) {
+            metricScores["Bat Speed Potential"] = batSpeedPotential
+            weightedScores += batSpeedPotential to 25
+            findings += if (batSpeedPotential >= 72) {
+                Finding(
+                    FindingType.GOOD, "Hand speed",
+                    "Strong coordinated two-hand movement was visible relative to body size. This is movement potential, not measured bat speed."
+                )
+            } else {
+                Finding(
+                    FindingType.TIP, "Hand speed",
+                    "Build speed gradually with controlled tee swings while keeping both hands connected through rotation. This score is not radar-measured bat speed."
+                )
+            }
+        } else {
+            missingAreas += "two-hand speed"
+        }
+
+        if (missingAreas.isNotEmpty()) {
+            findings += Finding(
+                FindingType.TIP,
+                "Visibility",
+                "Not measured from this clip: ${missingAreas.joinToString()}. SportsAI left these areas unscored instead of treating missing joints as poor technique."
+            )
+        }
         if (result.detectionRate < 0.6f) {
             findings += Finding(
                 FindingType.TIP, "Filming",
-                "Only part of your body was consistently visible. A side-on, full-body angle with " +
-                    "good lighting improves accuracy."
+                "Only part of the batter was consistently visible. A side-on, full-body angle with good lighting improves offline accuracy."
             )
         }
 
-        score = score.coerceIn(0, 100)
-
-        val rotationScore = if (trunkRange >= 20.0) 90 else 40
-        val headEyesScore = if (headDrift <= 0.18f) 85 else 38
-        val extensionScore = if (armExtension >= 150.0) 88 else 42
-        val lowerBodyScore = when {
-            maxKneeFlex in 15.0..55.0 -> 82
-            maxKneeFlex < 15.0 -> 35
-            else -> 55
+        val score = weightedAverage(weightedScores)
+        val partialScore = metricScores.size < Sport.BASEBALL_BAT.metrics.size
+        val overview = buildOverview(sport, score, metricScores, partialScore)
+        val summary = buildString {
+            append("Batter Lock analyzed one continuous athlete track. ")
+            append(if (metricScores.isEmpty()) {
+                "The visible joints were not complete enough for mechanics scores."
+            } else if (partialScore) {
+                "The $score/100 value averages only ${metricScores.size} visible measured areas; it is not a complete overall rating."
+            } else {
+                buildSummary(score)
+            })
         }
-        val batSpeedPotential = wristSpeedScore(result.timeline)
-
-        val metricScores = mapOf(
-            "Bat Speed Potential" to batSpeedPotential,
-            "Ball Tracking" to headEyesScore,
-            "Hip Rotation" to rotationScore,
-            "Contact Extension" to extensionScore,
-            "Lower Body Power" to lowerBodyScore
+        return TechniqueReport(
+            sport = sport,
+            overallScore = score,
+            summary = summary,
+            findings = findings,
+            detectionRate = result.detectionRate,
+            metricScores = metricScores,
+            aiOverview = overview
         )
-        val overview = buildOverview(sport, score, metricScores)
-
-        return TechniqueReport(sport, score, buildSummary(score), findings, result.detectionRate, metricScores, overview)
     }
 
     private fun analyzeBasketball(result: AnalysisResult): TechniqueReport {
@@ -531,7 +646,18 @@ class TechniqueAnalyzer {
         return TechniqueReport(sport, score, buildSummary(score), findings, result.detectionRate, metricScores, overview)
     }
 
-    private fun buildOverview(sport: String, score: Int, metrics: Map<String, Int>): String {
+    private fun buildOverview(
+        sport: String,
+        score: Int,
+        metrics: Map<String, Int>,
+        partialScore: Boolean = false
+    ): String {
+        if (metrics.isEmpty()) {
+            return "Batter Lock followed one athlete, but the clip did not show enough reliable joints for individual mechanics scores. " +
+                "SportsAI left those areas unmeasured instead of turning missing landmarks into technique faults. " +
+                "Record the full body and both hands from setup through follow-through. " +
+                "Analyze the clearer clip to create a trustworthy offline baseline."
+        }
         val best = metrics.maxByOrNull { it.value }
         val worst = metrics.minByOrNull { it.value }
         val rating = when {
@@ -540,10 +666,16 @@ class TechniqueAnalyzer {
             else -> "developing"
         }
         return buildString {
-            append("Your $sport technique scores $score/100 overall, showing $rating form. ")
-            if (best != null) append("${best.key} is currently your strongest area at ${best.value}/100. ")
+            if (partialScore) {
+                append("Across the ${metrics.size} visible areas SportsAI could measure, your $sport average is $score/100; this is not a complete overall rating. ")
+            } else {
+                append("Your $sport technique scores $score/100 overall, showing $rating form. ")
+            }
+            if (best != null) {
+                append("${overviewMetricLabel(sport, best.key)} is currently your strongest area at ${best.value}/100. ")
+            }
             if (worst != null && worst.key != best?.key) {
-                append("Your clearest opportunity is ${worst.key}, which scored ${worst.value}/100. ")
+                append("Your clearest opportunity is ${overviewMetricLabel(sport, worst.key)}, which scored ${worst.value}/100. ")
                 append("Use the recommended drill in your next session, then compare this metric again to confirm progress.")
             } else {
                 append("Your measured areas are well balanced. ")
@@ -557,13 +689,7 @@ class TechniqueAnalyzer {
         val speeds = timeline.zipWithNext().mapNotNull { (previous, current) ->
             val elapsedSeconds = (current.timestampMs - previous.timestampMs) / 1_000.0
             if (elapsedSeconds <= 0.0) return@mapNotNull null
-            val leftShoulder = current.point(LEFT_SHOULDER)
-            val rightShoulder = current.point(RIGHT_SHOULDER)
-            if (leftShoulder == null || rightShoulder == null) return@mapNotNull null
-            val bodyScale = hypot(
-                (rightShoulder.x - leftShoulder.x).toDouble(),
-                (rightShoulder.y - leftShoulder.y).toDouble()
-            ).coerceAtLeast(1.0)
+            val bodyScale = battingBodyScale(current).coerceAtLeast(1.0)
 
             val wristSpeeds = listOf(LEFT_WRIST, RIGHT_WRIST).mapNotNull { type ->
                 val from = previous.point(type) ?: return@mapNotNull null
@@ -582,6 +708,133 @@ class TechniqueAnalyzer {
 
     private fun FramePose.point(type: Int): LandmarkPoint? =
         landmarks.firstOrNull { it.type == type && it.inFrameLikelihood >= MIN_LIKELIHOOD }
+
+    /** Signed pelvis/shoulder axial separation; unavailable when depth is not reliable. */
+    private fun hipShoulderSeparation(frame: FramePose): Double? {
+        val leftShoulder = frame.point(LEFT_SHOULDER) ?: return null
+        val rightShoulder = frame.point(RIGHT_SHOULDER) ?: return null
+        val leftHip = frame.point(LEFT_HIP) ?: return null
+        val rightHip = frame.point(RIGHT_HIP) ?: return null
+        // Never subtract angles from different planes. Partial depth is common when the catcher
+        // occludes the batter's hips and would otherwise create false separation.
+        val shoulderWidth = distance2d(leftShoulder, rightShoulder).coerceAtLeast(1.0)
+        val hipWidth = distance2d(leftHip, rightHip).coerceAtLeast(1.0)
+        val hasReliableDepth = abs(rightShoulder.z - leftShoulder.z) >= shoulderWidth * 0.04 &&
+            abs(rightHip.z - leftHip.z) >= hipWidth * 0.04
+        if (!hasReliableDepth) return null
+        val shoulderAngle = depthLineOrientation(leftShoulder, rightShoulder)
+        val hipAngle = depthLineOrientation(leftHip, rightHip)
+        return signedAngleDifference(shoulderAngle, hipAngle)
+    }
+
+    private fun depthLineOrientation(
+        left: LandmarkPoint,
+        right: LandmarkPoint
+    ): Double = Math.toDegrees(
+        atan2((right.z - left.z).toDouble(), (right.x - left.x).toDouble())
+    )
+
+    private fun overviewMetricLabel(sport: String, metric: String): String =
+        if (sport == Sport.BASEBALL_BAT.displayName) {
+            when (metric) {
+                "Ball Tracking" -> "Head stability (the on-device ball-tracking proxy)"
+                "Hip Rotation" -> "Rotation sequencing (the on-device hip-rotation proxy)"
+                "Swing Extension" -> "Arm extension near peak hand speed"
+                "Lower-Body Load" -> "Lower-body load (the on-device knee-flexion proxy)"
+                else -> metric
+            }
+        } else {
+            metric
+        }
+
+    private fun weightedAverage(values: List<Pair<Int, Int>>): Int {
+        val totalWeight = values.sumOf { it.second }
+        if (totalWeight <= 0) return 0
+        return (values.sumOf { (value, weight) -> value * weight }.toDouble() / totalWeight)
+            .roundToInt()
+            .coerceIn(0, 100)
+    }
+
+    private fun distance2d(first: LandmarkPoint, second: LandmarkPoint): Double =
+        hypot((second.x - first.x).toDouble(), (second.y - first.y).toDouble())
+
+    private fun angleDifference(first: Double, second: Double): Double {
+        val difference = abs(first - second) % 360.0
+        return minOf(difference, 360.0 - difference)
+    }
+
+    private fun signedAngleDifference(first: Double, second: Double): Double {
+        var difference = (first - second) % 360.0
+        if (difference > 180.0) difference -= 360.0
+        if (difference < -180.0) difference += 360.0
+        return difference
+    }
+
+    /** Range of head position relative to pelvis, normalized by torso/shoulder size. */
+    private fun battingHeadDrift(timeline: List<FramePose>, requiredSamples: Int): Double? {
+        val positions = timeline.mapNotNull { frame ->
+            val leftHip = frame.point(LEFT_HIP) ?: return@mapNotNull null
+            val rightHip = frame.point(RIGHT_HIP) ?: return@mapNotNull null
+            val head = frame.point(0)
+            val leftShoulder = frame.point(LEFT_SHOULDER)
+            val rightShoulder = frame.point(RIGHT_SHOULDER)
+            val headX = head?.x ?: if (leftShoulder != null && rightShoulder != null) {
+                (leftShoulder.x + rightShoulder.x) / 2f
+            } else return@mapNotNull null
+            val headY = head?.y ?: (leftShoulder!!.y + rightShoulder!!.y) / 2f
+            val hipX = (leftHip.x + rightHip.x) / 2f
+            val hipY = (leftHip.y + rightHip.y) / 2f
+            val scale = battingBodyScale(frame).coerceAtLeast(1.0)
+            (headX - hipX) / scale to (headY - hipY) / scale
+        }
+        if (positions.size < requiredSamples) return null
+        val xRange = positions.maxOf { it.first } - positions.minOf { it.first }
+        val yRange = positions.maxOf { it.second } - positions.minOf { it.second }
+        return hypot(xRange.toDouble(), yRange.toDouble())
+    }
+
+    private fun peakTwoHandSpeedFrame(timeline: List<FramePose>): FramePose? {
+        val peakIndex = coordinatedBattingPeakIndex(timeline) ?: return null
+        return timeline.getOrNull(peakIndex)
+    }
+
+    private fun battingHandSpeedScore(timeline: List<FramePose>): Int? {
+        val peakIndex = coordinatedBattingPeakIndex(timeline) ?: return null
+        val intervalSpeeds = coordinatedBattingMotionScores(timeline)
+        val peakWindow = intervalSpeeds.subList(peakIndex - 1, peakIndex + 2)
+        val peakMedian = peakWindow.sorted()[1]
+        return (35.0 + peakMedian * 11.0).roundToInt().coerceIn(35, 96)
+    }
+
+    private fun battingBodyScale(frame: FramePose): Double {
+        val leftShoulder = frame.point(LEFT_SHOULDER)
+        val rightShoulder = frame.point(RIGHT_SHOULDER)
+        val leftHip = frame.point(LEFT_HIP)
+        val rightHip = frame.point(RIGHT_HIP)
+        val shoulderWidth = if (leftShoulder != null && rightShoulder != null) {
+            hypot(
+                (rightShoulder.x - leftShoulder.x).toDouble(),
+                (rightShoulder.y - leftShoulder.y).toDouble()
+            )
+        } else 0.0
+        val torso = if (leftShoulder != null && rightShoulder != null &&
+            leftHip != null && rightHip != null
+        ) {
+            val shoulderX = (leftShoulder.x + rightShoulder.x) / 2f
+            val shoulderY = (leftShoulder.y + rightShoulder.y) / 2f
+            val hipX = (leftHip.x + rightHip.x) / 2f
+            val hipY = (leftHip.y + rightHip.y) / 2f
+            hypot((hipX - shoulderX).toDouble(), (hipY - shoulderY).toDouble())
+        } else 0.0
+        return max(shoulderWidth, torso * 0.8)
+    }
+
+    private fun elbowAngle(frame: FramePose, right: Boolean): Double? {
+        val shoulder = frame.point(if (right) RIGHT_SHOULDER else LEFT_SHOULDER) ?: return null
+        val elbow = frame.point(if (right) RIGHT_ELBOW else LEFT_ELBOW) ?: return null
+        val wrist = frame.point(if (right) RIGHT_WRIST else LEFT_WRIST) ?: return null
+        return angle(shoulder, elbow, wrist)
+    }
 
     /** Angle ABC in degrees at vertex B. */
     private fun angle(a: LandmarkPoint, b: LandmarkPoint, c: LandmarkPoint): Double {

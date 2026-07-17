@@ -15,6 +15,8 @@ import com.example.sportsai.data.TechniqueAnalyzer
 import com.example.sportsai.data.VideoClipExporter
 import com.example.sportsai.data.InsufficientVisualEvidenceException
 import com.example.sportsai.model.AnimationFrame
+import com.example.sportsai.model.AthleteTrackingInfo
+import com.example.sportsai.model.AthleteTrackingMode
 import com.example.sportsai.model.FramePose
 import com.example.sportsai.model.HighlightClip
 import com.example.sportsai.model.SessionEntry
@@ -47,6 +49,7 @@ sealed interface AnalysisUiState {
         val analysisId: Long,
         val sourceVideoUri: String,
         val videoDurationMs: Long,
+        val athleteTracking: AthleteTrackingInfo = AthleteTrackingInfo(),
         /** Filming date chosen by the user; null until they set it. */
         val filmedAtMillis: Long? = null,
         /** True once this session has been added to the progress timeline. */
@@ -229,7 +232,7 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
         _highlightEditState.value = HighlightEditUiState.Idle
         viewModelScope.launch {
             try {
-                val result = analyzer.analyze(videoUri) { progress ->
+                val result = analyzer.analyze(videoUri, sport) { progress ->
                     _uiState.value = AnalysisUiState.Analyzing(progress)
                 }
                 _uiState.value = AnalysisUiState.Analyzing(
@@ -237,9 +240,19 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 // Find the action first, then re-open that exact range at coaching resolution.
                 // The animation frames are intentionally small and are only a fallback.
-                val proposedHighlights = highlightExtractor.extract(result, sport)
+                val batterLockRejected = sport == Sport.BASEBALL_BAT &&
+                    result.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED
+                val proposedHighlights = if (batterLockRejected) {
+                    emptyList()
+                } else {
+                    highlightExtractor.extract(result, sport)
+                }
                 var coachingFrames = emptyList<AnimationFrame>()
-                val report = try {
+                val report = if (batterLockRejected) {
+                    // Safety contract: an uncertain candidate timeline never reaches Gemini,
+                    // scoring, highlight export, or history persistence.
+                    techniqueAnalyzer.analyze(result, sport)
+                } else try {
                     if (geminiCoach.isConfigured && result.animationFrames.isNotEmpty()) {
                         coachingFrames = coachingFrameExtractor.extract(
                             videoUri = videoUri,
@@ -275,10 +288,22 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 // Extract highlight clips from the pose timeline.
+                var highlightExportFailed = false
                 val highlights = proposedHighlights.map { clip ->
-                    runCatching {
+                    try {
                         videoClipExporter.export(videoUri, clip, analysisId)
-                    }.getOrDefault(clip)
+                    } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        highlightExportFailed = true
+                        clip
+                    }
+                }
+                if (highlightExportFailed) {
+                    _highlightEditState.value = HighlightEditUiState.Error(
+                        "SportsAI selected the action, but the private MP4 cut could not be saved. " +
+                            "The card is a source preview; open Edit and save the cut again."
+                    )
                 }
                 val reportWithHighlights = report.copy(highlights = highlights)
 
@@ -290,7 +315,8 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
                     animationFrames = result.animationFrames,
                     analysisId = analysisId,
                     sourceVideoUri = videoUri.toString(),
-                    videoDurationMs = result.durationMs
+                    videoDurationMs = result.durationMs,
+                    athleteTracking = result.athleteTracking
                 )
             } catch (e: Exception) {
                 _uiState.value = AnalysisUiState.Error(e.message ?: "Analysis failed")
@@ -301,10 +327,16 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
     /** Called when the user picks the filming date manually (video had no date metadata). */
     fun saveSessionWithDate(filmedAtMillis: Long) {
         val initial = _uiState.value as? AnalysisUiState.Done ?: return
-        if (initial.savedToTimeline) return
+        if (initial.savedToTimeline ||
+            (initial.sport == Sport.BASEBALL_BAT &&
+                initial.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED)
+        ) return
         viewModelScope.launch(Dispatchers.IO) {
             val latest = _uiState.value as? AnalysisUiState.Done ?: return@launch
-            if (latest.analysisId != initial.analysisId || latest.savedToTimeline) return@launch
+            if (latest.analysisId != initial.analysisId || latest.savedToTimeline ||
+                (latest.sport == Sport.BASEBALL_BAT &&
+                    latest.athleteTracking.mode != AthleteTrackingMode.BATTER_LOCKED)
+            ) return@launch
             val entry = persist(latest, filmedAtMillis)
             _uiState.value = latest.copy(
                 filmedAtMillis = filmedAtMillis,
@@ -433,7 +465,8 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
             findings = state.report.findings,
             detectionRate = state.report.detectionRate,
             sourceVideoUri = state.sourceVideoUri,
-            videoDurationMs = state.videoDurationMs
+            videoDurationMs = state.videoDurationMs,
+            analysisProfile = state.report.analysisProfile
         )
         _timeline.value = history.add(entry)
         return entry
@@ -460,9 +493,7 @@ class AnalysisViewModel(app: Application) : AndroidViewModel(app) {
         return offline.copy(
             summary = "The camera view was not clear enough for verified Gemini coaching, so these scores use on-device pose tracking.",
             findings = listOf(Finding(FindingType.TIP, "Camera view", cameraMessage)) + offline.findings,
-            aiOverview = "Gemini could not clearly verify the athlete throughout the submitted action frames, so SportsAI did not let it guess. " +
-                "The scores below use on-device pose tracking instead. ${offline.summary} " +
-                "For verified visual coaching, record the full athlete and equipment from setup through follow-through in bright, steady video."
+            aiOverview = offline.aiOverview
         )
     }
 

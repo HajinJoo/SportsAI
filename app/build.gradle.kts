@@ -15,8 +15,8 @@ android {
         applicationId = "com.example.sportsai"
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
-        versionName = "2.1"
+        versionCode = 7
+        versionName = "2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -28,6 +28,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+    }
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = true
         }
     }
     compileOptions {
@@ -53,6 +61,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.mlkit.pose.detection.accurate)
+    implementation(libs.mediapipe.tasks.vision)
     implementation(libs.coil.compose)
     implementation(libs.androidx.media3.transformer)
     implementation(libs.androidx.media3.exoplayer)

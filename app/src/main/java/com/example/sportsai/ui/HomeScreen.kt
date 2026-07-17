@@ -67,6 +67,7 @@ import com.example.sportsai.model.FindingType
 import com.example.sportsai.model.SessionEntry
 import com.example.sportsai.model.Sport
 import com.example.sportsai.model.TechniqueReport
+import com.example.sportsai.model.isPartialMetricScore
 import com.example.sportsai.ui.theme.GoodGreen
 import com.example.sportsai.ui.theme.ScoreHigh
 import com.example.sportsai.ui.theme.ScoreLow
@@ -518,7 +519,7 @@ private fun ScoreCard(report: TechniqueReport) {
                         color = scoreColor
                     )
                     Text(
-                        "/100",
+                        if (report.isPartialMetricScore) "MEASURED /100" else "/100",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
