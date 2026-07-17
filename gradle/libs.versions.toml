@@ -13,7 +13,7 @@ lifecycleViewmodelCompose = "2.6.1"
 coroutines = "1.7.3"
 mlkitPose = "18.0.0-beta5"
 mediaPipeTasks = "0.10.35"
-coil = "2.5.0"
+coil = "2.7.0"
 media3 = "1.10.1"
 
 [libraries]
